@@ -75,13 +75,9 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
     VERSION = '1.1.1'
 
     def __init__(self, execute=processutils.execute, *args, **kwargs):
-        self._remotefsclient = None
-        super(GlusterfsDriver, self).__init__(*args, **kwargs)
         self.configuration.append_config_values(volume_opts)
+        super(GlusterfsDriver, self).__init__(*args, **kwargs)
         self._nova = None
-        self.base = getattr(self.configuration,
-                            'glusterfs_mount_point_base',
-                            CONF.glusterfs_mount_point_base)
         self._remotefsclient = remotefs.RemoteFsClient(
             'glusterfs',
             execute,
@@ -92,21 +88,28 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
         if self._remotefsclient:
             self._remotefsclient.set_execute(execute)
 
+    def _get_mount_point_base():
+        return getattr(self.configuration,
+                       'glusterfs_mount_point_base',
+                       CONF.glusterfs_mount_point_base)
+
+    def _get_shares_config():
+        return self.configuration.glusterfs_shares_config
+
     def do_setup(self, context):
         """Any initialization the volume driver does while starting."""
         super(GlusterfsDriver, self).do_setup(context)
 
         self._nova = compute.API()
 
-        config = self.configuration.glusterfs_shares_config
-        if not config:
+        if not self.shares_config:
             msg = (_("There's no Gluster config file configured (%s)") %
                    'glusterfs_shares_config')
             LOG.warn(msg)
             raise exception.GlusterfsException(msg)
-        if not os.path.exists(config):
+        if not os.path.exists(self.shares_config):
             msg = (_("Gluster config file at %(config)s doesn't exist") %
-                   {'config': config})
+                   {'config': self.shares_config})
             LOG.warn(msg)
             raise exception.GlusterfsException(msg)
 
@@ -161,20 +164,12 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
         pass
 
     def _local_volume_dir(self, volume):
-        hashed = self._get_hash_str(volume['provider_location'])
-        path = '%s/%s' % (self.configuration.glusterfs_mount_point_base,
-                          hashed)
+        share_path = volume['provider_location'])
+        self._get_mount_point_for_share(share_path)
         return path
 
-    def _local_path_volume(self, volume):
-        path_to_disk = '%s/%s' % (
-            self._local_volume_dir(volume),
-            volume['name'])
-
-        return path_to_disk
-
     def _local_path_volume_info(self, volume):
-        return '%s%s' % (self._local_path_volume(volume), '.info')
+        return '%s%s' % (self.local_path(volume), '.info')
 
     def _qemu_img_info(self, path):
         """Sanitize image_utils' qemu_img_info.
@@ -199,7 +194,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
 
         if snap_info == {}:
             # No info file = no snapshots exist
-            vol_path = os.path.basename(self._local_path_volume(volume))
+            vol_path = os.path.basename(self.local_path(volume))
             return vol_path
 
         return snap_info['active']
@@ -302,7 +297,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
         img_info = self._qemu_img_info(forward_path)
         path_to_snap_img = os.path.join(vol_path, img_info.backing_file)
 
-        path_to_new_vol = self._local_path_volume(volume)
+        path_to_new_vol = self.local_path(volume)
 
         LOG.debug("will copy from snapshot at %s" % path_to_snap_img)
 
@@ -336,7 +331,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
 
         # If an exception (e.g. timeout) occurred during delete_snapshot, the
         # base volume may linger around, so just delete it if it exists
-        base_volume_path = self._local_path_volume(volume)
+        base_volume_path = self.local_path(volume)
         fileutils.delete_if_exists(base_volume_path)
 
         info_path = self._local_path_volume_info(volume)
@@ -440,9 +435,9 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
 
             backing_filename = self.get_active_image_from_info(
                 snapshot['volume'])
-            path_to_disk = self._local_path_volume(snapshot['volume'])
+            path_to_disk = self.local_path(snapshot['volume'])
             new_snap_path = '%s.%s' % (
-                self._local_path_volume(snapshot['volume']),
+                self.local_path(snapshot['volume']),
                 snapshot['id'])
 
             self._create_qcow2_snap_file(snapshot,
@@ -505,7 +500,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
                             'for creation of snapshot %s.') % snapshot['id']
                     raise exception.GlusterfsException(msg)
 
-            info_path = self._local_path_volume(snapshot['volume']) + '.info'
+            info_path = self.local_path(snapshot['volume']) + '.info'
             snap_info = self._read_info_file(info_path, empty_if_missing=True)
             snap_info['active'] = os.path.basename(new_snap_path)
             snap_info[snapshot['id']] = os.path.basename(new_snap_path)
@@ -516,7 +511,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
         LOG.debug('create snapshot: %s' % snapshot)
         LOG.debug('volume id: %s' % snapshot['volume_id'])
 
-        path_to_disk = self._local_path_volume(snapshot['volume'])
+        path_to_disk = self.local_path(snapshot['volume'])
         self._create_snapshot_offline(snapshot, path_to_disk)
 
     def _create_qcow2_snap_file(self, snapshot, backing_filename,
@@ -633,7 +628,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
 
         # Determine the true snapshot file for this snapshot
         #  based on the .info file
-        info_path = self._local_path_volume(snapshot['volume']) + '.info'
+        info_path = self.local_path(snapshot['volume']) + '.info'
         snap_info = self._read_info_file(info_path, empty_if_missing=True)
 
         if snapshot['id'] not in snap_info:
@@ -681,7 +676,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
             new_base_file = base_file_img_info.backing_file
 
             base_id = None
-            info_path = self._local_path_volume(snapshot['volume']) + '.info'
+            info_path = self.local_path(snapshot['volume']) + '.info'
             snap_info = self._read_info_file(info_path)
             for key, value in snap_info.iteritems():
                 if value == base_file and key != 'active':
@@ -720,7 +715,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
             self._execute('rm', '-f', snapshot_path, run_as_root=True)
 
             # Remove snapshot_file from info
-            info_path = self._local_path_volume(snapshot['volume']) + '.info'
+            info_path = self.local_path(snapshot['volume']) + '.info'
             snap_info = self._read_info_file(info_path)
 
             del(snap_info[snapshot['id']])
@@ -785,7 +780,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
             self._execute('rm', '-f', higher_file_path, run_as_root=True)
 
             # Remove snapshot_file from info
-            info_path = self._local_path_volume(snapshot['volume']) + '.info'
+            info_path = self.local_path(snapshot['volume']) + '.info'
             snap_info = self._read_info_file(info_path)
             del(snap_info[snapshot['id']])
             snap_info[higher_id] = snapshot_file
@@ -801,7 +796,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
     def _delete_snapshot_online(self, context, snapshot, info):
         # Update info over the course of this method
         # active file never changes
-        info_path = self._local_path_volume(snapshot['volume']) + '.info'
+        info_path = self.local_path(snapshot['volume']) + '.info'
         snap_info = self._read_info_file(info_path)
 
         if info['active_file'] == info['snapshot_file']:
@@ -893,7 +888,7 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
         self._execute('rm', '-f', path_to_delete, run_as_root=True)
 
     def _delete_stale_snapshot(self, snapshot):
-        info_path = self._local_path_volume(snapshot['volume']) + '.info'
+        info_path = self.local_path(snapshot['volume']) + '.info'
         snap_info = self._read_info_file(info_path)
 
         if snapshot['id'] in snap_info:
@@ -972,9 +967,9 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
 
         # Find active qcow2 file
         active_file = self.get_active_image_from_info(volume)
-        path = '%s/%s/%s' % (self.configuration.glusterfs_mount_point_base,
-                             self._get_hash_str(volume['provider_location']),
-                             active_file)
+        path = '%s/%s' % (self._get_mount_point_for_share(
+                                volume['provider_location']),
+                          active_file)
 
         data = {'export': volume['provider_location'],
                 'name': active_file}
@@ -991,12 +986,8 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
         return {
             'driver_volume_type': 'glusterfs',
             'data': data,
-            'mount_point_base': self._get_mount_point_base()
+            'mount_point_base': self.base()
         }
-
-    def terminate_connection(self, volume, connector, **kwargs):
-        """Disallow connection from connector."""
-        pass
 
     @utils.synchronized('glusterfs', external=False)
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
@@ -1089,22 +1080,6 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
 
         self._set_rw_permissions_for_all(volume_path)
 
-    def _ensure_shares_mounted(self):
-        """Mount all configured GlusterFS shares."""
-
-        self._mounted_shares = []
-
-        self._load_shares_config(self.configuration.glusterfs_shares_config)
-
-        for share in self.shares.keys():
-            try:
-                self._ensure_share_mounted(share)
-                self._mounted_shares.append(share)
-            except Exception as exc:
-                LOG.error(_('Exception during mounting %s') % (exc,))
-
-        LOG.debug('Available shares: %s' % self._mounted_shares)
-
     def _ensure_share_writable(self, path):
         """Ensure that the Cinder user can write to the share.
 
@@ -1170,37 +1145,6 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
                 volume_size=volume_size_for)
         return greatest_share
 
-    def _get_hash_str(self, base_str):
-        """Return a string that represents hash of base_str
-        (in a hex format).
-        """
-        return hashlib.md5(base_str).hexdigest()
-
-    def _get_mount_point_for_share(self, glusterfs_share):
-        """Return mount point for share.
-        :param glusterfs_share: example 172.18.194.100:/var/glusterfs
-        """
-        return self._remotefsclient.get_mount_point(glusterfs_share)
-
-    def _get_available_capacity(self, glusterfs_share):
-        """Calculate available space on the GlusterFS share.
-        :param glusterfs_share: example 172.18.194.100:/var/glusterfs
-        """
-        mount_point = self._get_mount_point_for_share(glusterfs_share)
-
-        out, _ = self._execute('df', '--portability', '--block-size', '1',
-                               mount_point, run_as_root=True)
-        out = out.splitlines()[1]
-
-        size = int(out.split()[1])
-        available = int(out.split()[3])
-
-        return available, size
-
-    def _get_capacity_info(self, glusterfs_share):
-        available, size = self._get_available_capacity(glusterfs_share)
-        return size, available, size - available
-
     def _mount_glusterfs(self, glusterfs_share, mount_path, ensure=False):
         """Mount GlusterFS share to mount path."""
         self._execute('mkdir', '-p', mount_path)
@@ -1211,9 +1155,6 @@ class GlusterfsDriver(nfs.RemoteFsDriver):
             command.extend(self.shares[glusterfs_share].split())
 
         self._do_mount(command, ensure, glusterfs_share)
-
-    def _get_mount_point_base(self):
-        return self.base
 
     def backup_volume(self, context, backup, backup_service):
         """Create a new backup from an existing volume.

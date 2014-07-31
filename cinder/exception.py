@@ -664,6 +664,18 @@ class SolidFireAccountNotFound(SolidFireDriverException):
 class Invalid3PARDomain(VolumeDriverException):
     message = _("Invalid 3PAR Domain: %(err)s")
 
+# RemoteFS drivers
+class RemoteFSException(VolumeDriverException):
+    message = _("Unknown RemoteFS exception")
+
+
+class RemoteFSNoSharesMounted(RemoteFSException):
+    message = _("No mounted shares found")
+
+
+class RemoteFSNoSuitableShareFound(RemoteFSException):
+    message = _("There is no share which can host %(volume_size)sG")
+
 
 # NFS driver
 class NfsException(VolumeDriverException):
