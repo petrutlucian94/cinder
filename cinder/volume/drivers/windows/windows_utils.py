@@ -311,20 +311,27 @@ class WindowsUtils(object):
 
     def copy_vhd_disk(self, source_path, destination_path):
         """Copy the vhd disk from source path to destination path."""
-        try:
-            vhdfiles = self._conn_cimv2.query(
-                "Select * from CIM_DataFile where Name = '" +
-                source_path + "'")
-            if len(vhdfiles) > 0:
-                vhdfiles[0].Copy(destination_path)
-        except wmi.x_wmi as exc:
+        vhdfiles = self._conn_cimv2.query(
+            "Select * from CIM_DataFile where Name = '" +
+            source_path + "'")
+        if len(vhdfiles) > 0:
+            ret_val = vhdfiles[0].Copy(destination_path)[0]
+            if ret_val:
+                err_msg = (_(
+                    'copy_vhd_disk: error when copying disk from source '
+                    'path : %(src_path)s to destination path: %(dest_path)s '
+                    '. Error code: '
+                    '%(error_code)s') % {'src_path': source_path,
+                                         'dest_path': destination_path,
+                                         'error_code': ret_val})
+                LOG.error(err_msg)
+                raise exception.VolumeBackendAPIException(data=err_msg)
+
+        else:
             err_msg = (_(
-                'copy_vhd_disk: error when copying disk from source path : '
-                '%(src_path)s to destination path: %(dest_path)s '
-                '. WMI exception: '
-                '%(wmi_exc)s') % {'src_path': source_path,
-                                  'dest_path': destination_path,
-                                  'wmi_exc': exc})
+                'Could not copy disk %(src_path)s to %(dest_path)s . Could '
+                'not find source path.') % {'src_path': source_path,
+                                            'dest_path': destination_path})
             LOG.error(err_msg)
             raise exception.VolumeBackendAPIException(data=err_msg)
 
