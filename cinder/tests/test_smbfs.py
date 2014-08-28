@@ -95,23 +95,6 @@ class SmbFsTestCase(test.TestCase):
                 self._FAKE_VOLUME_PATH)
             fake_unlink.assert_called_once_with(fake_vol_info)
 
-    def test_load_shares_config(self):
-        fake_valid_share = self._FAKE_SHARE + " " + self._FAKE_SHARE_OPTS
-        fake_invalid_share = fake_valid_share[2:]
-        fake_commented_share = "#" + fake_valid_share
-        fake_shares = [fake_valid_share, fake_invalid_share,
-                       fake_commented_share]
-
-        self._smbfs_driver._read_config_file = mock.Mock(
-            return_value=fake_shares)
-
-        self._smbfs_driver._load_shares_config('fake_share_file')
-        valid_shares = self._smbfs_driver.shares
-
-        self.assertEqual(len(valid_shares), 1)
-        self.assertEqual(valid_shares[self._FAKE_SHARE],
-                         self._FAKE_SHARE_OPTS)
-
     def _test_setup(self, config, share_config_exists=True):
         fake_exists = mock.Mock(return_value=share_config_exists)
         fake_ensure_mounted = mock.MagicMock()
@@ -133,10 +116,10 @@ class SmbFsTestCase(test.TestCase):
     def test_setup_missing_shares_config_option(self):
         fake_config = copy.copy(self._FAKE_SMBFS_CONFIG)
         fake_config.smbfs_shares_config = None
-        self._test_setup(self._FAKE_SMBFS_CONFIG, None)
+        self._test_setup(fake_config, None)
 
     def test_setup_missing_shares_config_file(self):
-        self._test_setup(self._FAKE_SMBFS_CONFIG, share_config_exists=False)
+        self._test_setup(self._FAKE_SMBFS_CONFIG, False)
 
     def test_setup_invlid_oversub_ratio(self):
         fake_config = copy.copy(self._FAKE_SMBFS_CONFIG)
@@ -498,38 +481,6 @@ class SmbFsTestCase(test.TestCase):
     def test_delete_snapshot_with_two_or_more_upper_files(self):
         self._test_delete_snapshot(is_active_image=False,
                                    highest_file_exists=True)
-
-    def test_get_backing_chain(self):
-        fake_upper_snap_id = 'fake_upper_snap_id'
-        fake_upper_snap_path = (
-            self._FAKE_VOLUME_PATH + '-snapshot' + fake_upper_snap_id)
-        fake_upper_snap_name = os.path.basename(fake_upper_snap_path)
-        fake_snapshot_name = os.path.basename(self._FAKE_SNAPSHOT_PATH)
-
-        fake_img_info = mock.MagicMock()
-        type(fake_img_info).backing_file = mock.PropertyMock(
-            side_effect=(fake_snapshot_name,
-                         self._FAKE_VOLUME_NAME,
-                         None))
-
-        self._smbfs_driver._img_info = mock.Mock(
-            return_value=fake_img_info)
-        self._smbfs_driver.local_volume_dir = mock.Mock(
-            return_value=self._FAKE_MNT_POINT)
-
-        expected = [
-            {'filename': fake_upper_snap_name,
-             'backing-filename': fake_snapshot_name},
-            {'filename': fake_snapshot_name,
-             'backing-filename': self._FAKE_VOLUME_NAME},
-            {'filename': self._FAKE_VOLUME_NAME,
-             'backing-filename': None},
-        ]
-
-        backing_chain = self._smbfs_driver._get_backing_chain_for_path(
-            self._FAKE_VOLUME, fake_upper_snap_path)
-
-        self.assertEqual(expected, backing_chain)
 
     def _test_extend_volume(self, extend_failed=False):
         self._smbfs_driver.local_path = mock.Mock(
