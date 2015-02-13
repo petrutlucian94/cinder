@@ -27,6 +27,7 @@ we should look at maybe pushing this up to Oslo
 import contextlib
 import math
 import os
+import re
 import tempfile
 
 from oslo_concurrency import processutils
@@ -52,6 +53,8 @@ image_helper_opt = [cfg.StrOpt('image_conversion_dir',
 CONF = cfg.CONF
 CONF.register_opts(image_helper_opt)
 
+VHD_SIGNATURE = 'conectix'
+
 
 def qemu_img_info(path, run_as_root=True):
     """Return a object containing the parsed output from qemu-img info."""
@@ -59,15 +62,68 @@ def qemu_img_info(path, run_as_root=True):
     if os.name == 'nt':
         cmd = cmd[2:]
     out, _err = utils.execute(*cmd, run_as_root=run_as_root)
+    if _is_vhd(path):
+        out.file_format = 'vpc'
     return imageutils.QemuImgInfo(out)
 
 
-def convert_image(source, dest, out_format, bps_limit=None, run_as_root=True):
+def _is_vhd(path):
+    # qemu-img cannot recognise fixed VHD images due to the fact that it
+    # seeks the VHD signature at the wrong offset.
+    # TODO(lpetrut): Remove this after this fix merges:
+    # https://patchwork.ozlabs.org/patch/375762/
+    with open(path, 'rb') as f:
+        # Read footer
+        f.seek(0, 2)
+        file_size = f.tell()
+        if file_size >= 512:
+            f.seek(-512, 2)
+            if f.read(8) == VHD_SIGNATURE:
+                return True
+    return False
+
+
+def _get_qemu_convert_cmd(src, dest, out_format,
+                          out_subformat=None, cache_mode=None):
+    if out_format == 'vhd':
+        # qemu-img still uses the legacy vpc name
+        out_format == 'vpc'
+
+    cmd = ['qemu-img', 'convert', '-O', out_format]
+
+    if cache_mode:
+        cmd += ('-t', cache_mode)
+
+    if out_subformat:
+        cmd += ('-o subformat', out_subformat)
+
+    cmd += (src, dest)
+
+    return cmd
+
+
+def get_qemu_img_version():
+    info, _ = utils.execute('qemu-img', check_exit_code=False)
+    pattern = r"qemu-img version ([0-9\.]*)"
+    version = re.match(pattern, info)
+    if not version:
+        LOG.warn(_LW("qemu-img is not installed."))
+        return None
+    return [int(x) for x in version.groups()[0].split('.')]
+
+def check_qemu_img_version(minimum_version):
+    qemu_version = get_qemu_img_version()
+    if qemu_version < minimum_version.split('.'):
+        current_version = '.'.join((str(element) for element in qemu_version))
+        _msg = _('qemu-img %(minimum_version)s or later is required by '
+                 'this volume driver. Current qemu-img version: '
+                 '%(current_version)s') % {'minimum_version': minimum_version,
+                                           'current_version': current_version}
+        raise exception.VolumeBackendAPIException(data=_msg)
+
+def convert_image(source, dest, out_format, out_subformat=None,
+                  bps_limit=None, run_as_root=True):
     """Convert image to other format."""
-
-    cmd = ('qemu-img', 'convert',
-           '-O', out_format, source, dest)
-
     # Check whether O_DIRECT is supported and set '-t none' if it is
     # This is needed to ensure that all data hit the device before
     # it gets unmapped remotely from the host for some backends
@@ -81,9 +137,15 @@ def convert_image(source, dest, out_format, bps_limit=None, run_as_root=True):
             volume_utils.check_for_odirect_support(source,
                                                    dest,
                                                    'oflag=direct')):
-        cmd = ('qemu-img', 'convert',
-               '-t', 'none',
-               '-O', out_format, source, dest)
+        cache_mode = 'none'
+    else:
+        # use default
+        cache_mode = None
+
+    cmd = _get_qemu_convert_cmd(source, dest,
+                                out_format=out_format,
+                                out_subformat=out_subformat,
+                                cache_mode=cache_mode)
 
     start_time = timeutils.utcnow()
     cgcmd = volume_utils.setup_blkio_cgroup(source, dest, bps_limit)
@@ -112,8 +174,30 @@ def convert_image(source, dest, out_format, bps_limit=None, run_as_root=True):
 
 def resize_image(source, size, run_as_root=False):
     """Changes the virtual size of the image."""
+    info = qemu_img_info(source)
+    fmt = info.file_format
+    # Note: as for version 2.2, qemu-img cannot resize
+    # vhd/x images. For the moment, we'll just use an intermediary
+    # conversion in order to be able to do the resize.
+    if fmt in ('vpc', 'vhdx', 'vhd'):
+        tmp_path = source + '.tmp'
+        convert_image(source, tmp_path, 'raw')
+        _resize_image(tmp_path, size, run_as_root)
+        convert_image(tmp_path, fmt)
+        os.unlink(tmp_path)
+    else:
+        _resize_image(source, size, run_as_root)
+
+
+def _resize_image(source, size, run_as_root=False):
     cmd = ('qemu-img', 'resize', source, '%sG' % size)
     utils.execute(*cmd, run_as_root=run_as_root)
+
+    info = qemu_img_info(source)
+    virt_size = info.virtual_size / units.Gi
+    if virt_size != size:
+        raise exception.ExtendVolumeError(
+            reason='Resizing image file failed.')
 
 
 def fetch(context, image_service, image_id, path, _user_id, _project_id):
@@ -192,7 +276,7 @@ def fetch_to_raw(context, image_service,
 def fetch_to_volume_format(context, image_service,
                            image_id, dest, volume_format, blocksize,
                            user_id=None, project_id=None, size=None,
-                           run_as_root=True):
+                           volume_subformat=None, run_as_root=True):
     qemu_img = True
     image_meta = image_service.show(context, image_id)
 
@@ -278,11 +362,15 @@ def fetch_to_volume_format(context, image_service,
         LOG.debug("%s was %s, converting to %s " % (image_id, fmt,
                                                     volume_format))
         convert_image(tmp, dest, volume_format,
+                      out_subformat=volume_subformat,
                       bps_limit=CONF.volume_copy_bps_limit,
                       run_as_root=run_as_root)
 
         data = qemu_img_info(dest, run_as_root=run_as_root)
-        if data.file_format != volume_format:
+        # qemu-img still uses the legacy vpc format name
+        if (data.file_format != volume_format
+                and not (data.file_format == 'vpc' and
+                         volume_format == 'vhd')):
             raise exception.ImageUnacceptable(
                 image_id=image_id,
                 reason=_("Converted to %(vol_format)s, but format is "

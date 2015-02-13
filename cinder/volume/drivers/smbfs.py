@@ -26,6 +26,7 @@ from cinder.i18n import _, _LI, _LW
 from cinder.image import image_utils
 from cinder.openstack.common import log as logging
 from cinder import utils
+from cinder.volume.drivers import imagecache
 from cinder.volume.drivers import remotefs as remotefs_drv
 
 
@@ -80,6 +81,8 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
     SHARE_FORMAT_REGEX = r'//.+/.+'
     VERSION = VERSION
 
+    _MINIMUM_QEMU_IMG_VERSION = [1, 7]
+
     _DISK_FORMAT_VHD = 'vhd'
     _DISK_FORMAT_VHD_LEGACY = 'vpc'
     _DISK_FORMAT_VHDX = 'vhdx'
@@ -99,7 +102,8 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
             'cifs', root_helper, execute=execute,
             smbfs_mount_point_base=self.base,
             smbfs_mount_options=opts)
-        self.img_suffix = None
+        self._imagecache = imagecache.ImageCache(
+            self.configuration.volume_dd_blocksize)
 
     def _qemu_img_info(self, path, volume_name):
         return super(SmbfsDriver, self)._qemu_img_info_base(
@@ -159,6 +163,7 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
             LOG.error(msg)
             raise exception.SmbfsException(msg)
 
+        image_utils.check_qemu_img_version(self._MINIMUM_QEMU_IMG_VERSION)
         self.shares = {}  # address : options
         self._ensure_shares_mounted()
 
@@ -222,26 +227,11 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         info_path = self._local_path_volume_info(volume)
         self._delete(info_path)
 
-    def get_qemu_version(self):
-        info, _ = self._execute('qemu-img', check_exit_code=False)
-        pattern = r"qemu-img version ([0-9\.]*)"
-        version = re.match(pattern, info)
-        if not version:
-            LOG.warn(_LW("qemu-img is not installed."))
-            return None
-        return [int(x) for x in version.groups()[0].split('.')]
-
     def _create_windows_image(self, volume_path, volume_size, volume_format):
         """Creates a VHD or VHDX file of a given size."""
         # vhd is regarded as vpc by qemu
         if volume_format == self._DISK_FORMAT_VHD:
             volume_format = self._DISK_FORMAT_VHD_LEGACY
-        else:
-            qemu_version = self.get_qemu_version()
-            if qemu_version < [1, 7]:
-                err_msg = _("This version of qemu-img does not support vhdx "
-                            "images. Please upgrade to 1.7 or greater.")
-                raise exception.SmbfsException(err_msg)
 
         self._execute('qemu-img', 'create', '-f', volume_format,
                       volume_path, str(volume_size * units.Gi),
@@ -267,7 +257,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
             self._create_windows_image(volume_path, volume_size,
                                        volume_format)
         else:
-            self.img_suffix = None
             if volume_format == self._DISK_FORMAT_QCOW2:
                 self._create_qcow2_file(volume_path, volume_size)
             elif self.configuration.smbfs_sparsed_volumes:
@@ -413,28 +402,10 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         self._check_extend_volume_support(volume, size_gb)
         LOG.info(_LI('Resizing file to %sG...') % size_gb)
 
-        self._do_extend_volume(volume_path, size_gb, volume['name'])
+        self._do_extend_volume(volume_path, size_gb)
 
-    def _do_extend_volume(self, volume_path, size_gb, volume_name):
-        info = self._qemu_img_info(volume_path, volume_name)
-        fmt = info.file_format
-
-        # Note(lpetrut): as for version 2.0, qemu-img cannot resize
-        # vhd/x images. For the moment, we'll just use an intermediary
-        # conversion in order to be able to do the resize.
-        if fmt in (self._DISK_FORMAT_VHDX, self._DISK_FORMAT_VHD_LEGACY):
-            temp_image = volume_path + '.tmp'
-            image_utils.convert_image(volume_path, temp_image,
-                                      self._DISK_FORMAT_RAW)
-            image_utils.resize_image(temp_image, size_gb)
-            image_utils.convert_image(temp_image, volume_path, fmt)
-            self._delete(temp_image)
-        else:
-            image_utils.resize_image(volume_path, size_gb)
-
-        if not self._is_file_size_equal(volume_path, size_gb):
-            raise exception.ExtendVolumeError(
-                reason='Resizing image file failed.')
+    def _do_extend_volume(self, volume_path, size_gb):
+        image_utils.resize_image(volume_path, size_gb)
 
     def _check_extend_volume_support(self, volume, size_gb):
         volume_path = self.local_path(volume)
@@ -500,34 +471,15 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
 
     def copy_image_to_volume(self, context, volume, image_service, image_id):
         """Fetch the image from image_service and write it to the volume."""
-        volume_format = self.get_volume_format(volume, qemu_format=True)
+        volume_format = self.get_volume_format(volume)
+        volume_path = self.local_path(volume)
+        volume_size = volume['size'] << 30
+
         image_meta = image_service.show(context, image_id)
-        qemu_version = self.get_qemu_version()
 
-        if (qemu_version < [1, 7] and (
-                volume_format == self._DISK_FORMAT_VHDX and
-                image_meta['disk_format'] != volume_format)):
-            err_msg = _("Unsupported volume format: vhdx. qemu-img 1.7 or "
-                        "higher is required in order to properly support this "
-                        "format.")
-            raise exception.InvalidVolume(err_msg)
-
-        image_utils.fetch_to_volume_format(
-            context, image_service, image_id,
-            self.local_path(volume), volume_format,
-            self.configuration.volume_dd_blocksize)
-
-        self._do_extend_volume(self.local_path(volume),
-                               volume['size'],
-                               volume['name'])
-
-        data = image_utils.qemu_img_info(self.local_path(volume))
-        virt_size = data.virtual_size / units.Gi
-        if virt_size != volume['size']:
-            raise exception.ImageUnacceptable(
-                image_id=image_id,
-                reason=(_("Expected volume size was %d") % volume['size'])
-                + (_(" but size is now %d.") % virt_size))
+        self._imagecache.get_image(context, image_service, image_id,
+                                   volume_path, volume_format,
+                                   volume_size)
 
     @utils.synchronized('smbfs', external=False)
     def create_cloned_volume(self, volume, src_vref):
@@ -589,9 +541,3 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
             if 'volume_format' in spec.key:
                 return spec.value
         return None
-
-    def _is_file_size_equal(self, path, size):
-        """Checks if file size at path is equal to size."""
-        data = image_utils.qemu_img_info(path)
-        virt_size = data.virtual_size / units.Gi
-        return virt_size == size
