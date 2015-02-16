@@ -177,23 +177,59 @@ class TestConvertImage(test.TestCase):
 
 
 class TestResizeImage(test.TestCase):
-    @mock.patch('cinder.utils.execute')
-    def test_defaults(self, mock_exec):
-        source = mock.sentinel.source
-        size = mock.sentinel.size
-        output = image_utils.resize_image(source, size)
-        self.assertIsNone(output)
-        mock_exec.assert_called_once_with('qemu-img', 'resize', source,
-                                          'sentinel.sizeG', run_as_root=False)
+    @mock.patch.object(image_utils, 'qemu_img_info')
+    @mock.patch.object(image_utils, 'convert_image')
+    @mock.patch.object(image_utils, '_resize_image')
+    @mock.patch.object(image_utils, 'temporary_file')
+    def _test_resize_image(self, mock_temp_file, mock_resize, mock_convert,
+                           mock_qemu_img_info, image_format):
+        mock_qemu_img_info.return_value.file_format = image_format
+        mock_temp_file.return_value.__enter__.return_value = (
+            mock.sentinel.temp_file_path)
+        run_as_root = False
+
+        image_utils.resize_image(mock.sentinel.image_path,
+                                 mock.sentinel.new_size,
+                                 run_as_root=run_as_root)
+
+        if image_format in ('vpc', 'vhdx', 'vhd'):
+            resized_image = mock.sentinel.temp_file_path
+            mock_convert.assert_has_calls(
+                [mock.call(mock.sentinel.image_path,
+                           mock.sentinel.temp_file_path,
+                           'raw', run_as_root=run_as_root),
+                 mock.call(mock.sentinel.temp_file_path,
+                           mock.sentinel.image_path,
+                           image_format, run_as_root=run_as_root)])
+        else:
+            resized_image = mock.sentinel.image_path
+
+        mock_resize.assert_called_once_with(resized_image,
+                                            mock.sentinel.new_size,
+                                            run_as_root)
+
+    def test_resize_raw_image(self):
+        self._test_resize_image(image_format='raw')
+
+    def test_resize_vhd_image(self):
+        self._test_resize_image(image_format='vpc')
 
     @mock.patch('cinder.utils.execute')
-    def test_run_as_root(self, mock_exec):
+    def _test_do_resize_image(self, mock_exec, run_as_root=False):
         source = mock.sentinel.source
         size = mock.sentinel.size
-        output = image_utils.resize_image(source, size, run_as_root=True)
+        output = image_utils._resize_image(source, size,
+                                           run_as_root=run_as_root)
         self.assertIsNone(output)
         mock_exec.assert_called_once_with('qemu-img', 'resize', source,
-                                          'sentinel.sizeG', run_as_root=True)
+                                          'sentinel.sizeG',
+                                          run_as_root=run_as_root)
+
+    def test_do_resize_image(self):
+        self._test_do_resize_image()
+
+    def test_do_resize_image_run_as_root(self):
+        self._test_do_resize_image(run_as_root=True)
 
 
 class TestExtractTo(test.TestCase):
