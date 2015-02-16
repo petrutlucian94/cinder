@@ -28,46 +28,47 @@ from cinder.volume import throttling
 
 
 class TestQemuImgInfo(test.TestCase):
-    @mock.patch('cinder.openstack.common.imageutils.QemuImgInfo')
-    @mock.patch('cinder.utils.execute')
-    def test_qemu_img_info(self, mock_exec, mock_info):
-        mock_out = mock.sentinel.out
-        mock_err = mock.sentinel.err
-        test_path = mock.sentinel.path
-        mock_exec.return_value = (mock_out, mock_err)
-
-        output = image_utils.qemu_img_info(test_path)
-        mock_exec.assert_called_once_with('env', 'LC_ALL=C', 'qemu-img',
-                                          'info', test_path, run_as_root=True)
-        self.assertEqual(mock_info.return_value, output)
-
-    @mock.patch('cinder.openstack.common.imageutils.QemuImgInfo')
-    @mock.patch('cinder.utils.execute')
-    def test_qemu_img_info_not_root(self, mock_exec, mock_info):
-        mock_out = mock.sentinel.out
-        mock_err = mock.sentinel.err
-        test_path = mock.sentinel.path
-        mock_exec.return_value = (mock_out, mock_err)
-
-        output = image_utils.qemu_img_info(test_path, run_as_root=False)
-        mock_exec.assert_called_once_with('env', 'LC_ALL=C', 'qemu-img',
-                                          'info', test_path, run_as_root=False)
-        self.assertEqual(mock_info.return_value, output)
-
     @mock.patch('cinder.image.image_utils.os')
+    @mock.patch.object(image_utils, '_is_vhd')
     @mock.patch('cinder.openstack.common.imageutils.QemuImgInfo')
     @mock.patch('cinder.utils.execute')
-    def test_qemu_img_info_on_nt(self, mock_exec, mock_info, mock_os):
+    def _test_qemu_img_info(self, mock_exec, mock_info, mock_is_vhd, mock_os,
+                            is_vhd=False, os_name='posix', run_as_root=False,
+                            enable_vhd_check=False):
         mock_out = mock.sentinel.out
         mock_err = mock.sentinel.err
         test_path = mock.sentinel.path
         mock_exec.return_value = (mock_out, mock_err)
-        mock_os.name = 'nt'
+        mock_is_vhd.return_value = is_vhd
+        mock_os.name = os_name
+        img_info = mock_info.return_value
+        img_info.file_format = 'raw'
+        self.flags(enable_vhd_check=enable_vhd_check)
 
-        output = image_utils.qemu_img_info(test_path)
-        mock_exec.assert_called_once_with('qemu-img', 'info', test_path,
-                                          run_as_root=True)
-        self.assertEqual(mock_info.return_value, output)
+        output = image_utils.qemu_img_info(test_path, run_as_root=run_as_root)
+
+        expected_args = ('qemu-img', 'info', test_path)
+        if os_name != 'nt':
+            expected_args = ('env', 'LC_ALL=C') + expected_args
+        mock_exec.assert_called_once_with(*expected_args,
+                                          run_as_root=run_as_root)
+        self.assertEqual(img_info, output)
+        self.assertEqual(enable_vhd_check, mock_is_vhd.called)
+        if is_vhd and enable_vhd_check:
+            self.assertEqual('vpc', img_info.file_format)
+
+    def test_qemu_img_info_not_root(self):
+        self._test_qemu_img_info()
+
+    def test_qemu_img_info_on_nt(self):
+        self._test_qemu_img_info(os_name='nt')
+
+    def test_qemu_img_info_vhd_image(self):
+        # Ensure that if a vhd is wrongfully reported as raw due to a known
+        # qemu-img bug and the vhd check is enabled, the method being tested,
+        # will return the right image format.
+        self._test_qemu_img_info(is_vhd=True,
+                                 enable_vhd_check=True)
 
     @mock.patch('cinder.utils.execute')
     def test_get_qemu_img_version(self, mock_exec):
