@@ -52,14 +52,35 @@ image_helper_opt = [cfg.StrOpt('image_conversion_dir',
 CONF = cfg.CONF
 CONF.register_opts(image_helper_opt)
 
+VHD_SIGNATURE = 'conectix'
+
 
 def qemu_img_info(path, run_as_root=True):
     """Return an object containing the parsed output from qemu-img info."""
     cmd = ('env', 'LC_ALL=C', 'qemu-img', 'info', path)
     if os.name == 'nt':
         cmd = cmd[2:]
-    out, err = utils.execute(*cmd, run_as_root=run_as_root)
-    return imageutils.QemuImgInfo(out)
+    out, _err = utils.execute(*cmd, run_as_root=run_as_root)
+    info = imageutils.QemuImgInfo(out)
+    if _is_vhd(path):
+        info.file_format = 'vpc'
+    return info
+
+
+def _is_vhd(path):
+    # qemu-img cannot recognise fixed VHD images due to the fact that it
+    # seeks the VHD signature at the wrong offset.
+    # TODO(lpetrut): Remove this after this fix merges:
+    # https://patchwork.ozlabs.org/patch/375762/
+    with open(path, 'rb') as f:
+        # Read footer
+        f.seek(0, 2)
+        file_size = f.tell()
+        if file_size >= 512:
+            f.seek(-512, 2)
+            if f.read(8) == VHD_SIGNATURE:
+                return True
+    return False
 
 
 def get_qemu_img_version():
