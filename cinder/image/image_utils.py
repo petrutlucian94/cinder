@@ -159,6 +159,22 @@ def convert_image(source, dest, out_format, bps_limit=None, run_as_root=True):
 
 def resize_image(source, size, run_as_root=False):
     """Changes the virtual size of the image."""
+    info = qemu_img_info(source)
+    fmt = info.file_format
+    if fmt in ('vpc', 'vhdx', 'vhd'):
+        LOG.warn(_LW("qemu-img does not support resizing vhd/x images."
+                     "For this reason, an intermediary conversion is used in "
+                     "order to perform the requested resize. The image will "
+                     "have dynamic subformat."))
+        with temporary_file() as tmp_path:
+            convert_image(source, tmp_path, 'raw', run_as_root=run_as_root)
+            _resize_image(tmp_path, size, run_as_root)
+            convert_image(tmp_path, source, fmt, run_as_root=run_as_root)
+    else:
+        _resize_image(source, size, run_as_root)
+
+
+def _resize_image(source, size, run_as_root=False):
     cmd = ('qemu-img', 'resize', source, '%sG' % size)
     utils.execute(*cmd, run_as_root=run_as_root)
 

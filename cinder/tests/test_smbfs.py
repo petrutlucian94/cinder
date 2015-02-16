@@ -12,7 +12,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import contextlib
 import copy
 import os
 
@@ -313,53 +312,20 @@ class SmbFsTestCase(test.TestCase):
 
         self.assertEqual(expected, ret_val)
 
-    def _test_extend_volume(self, extend_failed=False, image_format='raw'):
+    def test_extend_volume(self):
         drv = self._smbfs_driver
 
         drv.local_path = mock.Mock(
-            return_value=self._FAKE_VOLUME_PATH)
-        drv._check_extend_volume_support = mock.Mock(
-            return_value=True)
-        drv._is_file_size_equal = mock.Mock(
-            return_value=not extend_failed)
-        drv._qemu_img_info = mock.Mock(
-            return_value=mock.Mock(file_format=image_format))
-        drv._delete = mock.Mock()
+            return_value=mock.sentinel.volume_path)
+        drv._check_extend_volume_support = mock.Mock()
+        drv._do_extend_volume = mock.Mock()
 
-        with contextlib.nested(
-                mock.patch.object(image_utils, 'resize_image'),
-                mock.patch.object(image_utils, 'convert_image')) as (
-                    fake_resize, fake_convert):
-            if extend_failed:
-                self.assertRaises(exception.ExtendVolumeError,
-                                  drv._extend_volume,
-                                  self._FAKE_VOLUME, mock.sentinel.new_size)
-            else:
-                drv._extend_volume(
-                    self._FAKE_VOLUME,
-                    mock.sentinel.new_size)
-                if image_format in (drv._DISK_FORMAT_VHDX,
-                                    drv._DISK_FORMAT_VHD_LEGACY):
-                    fake_tmp_path = self._FAKE_VOLUME_PATH + '.tmp'
-                    fake_convert.assert_any_call(self._FAKE_VOLUME_PATH,
-                                                 fake_tmp_path, 'raw')
-                    fake_resize.assert_called_once_with(
-                        fake_tmp_path, mock.sentinel.new_size)
-                    fake_convert.assert_any_call(fake_tmp_path,
-                                                 self._FAKE_VOLUME_PATH,
-                                                 image_format)
-                else:
-                    fake_resize.assert_called_once_with(
-                        self._FAKE_VOLUME_PATH, mock.sentinel.new_size)
+        drv._extend_volume(self._FAKE_VOLUME, mock.sentinel.new_size)
 
-    def test_extend_volume(self):
-        self._test_extend_volume()
-
-    def test_extend_volume_failed(self):
-        self._test_extend_volume(extend_failed=True)
-
-    def test_extend_vhd_volume(self):
-        self._test_extend_volume(image_format='vpc')
+        drv._check_extend_volume_support.assert_called_once_with(
+            self._FAKE_VOLUME, mock.sentinel.new_size)
+        drv._do_extend_volume.assert_called_once_with(
+            mock.sentinel.volume_path, mock.sentinel.new_size)
 
     def _test_check_extend_support(self, has_snapshots=False,
                                    is_eligible=True):
@@ -445,17 +411,9 @@ class SmbFsTestCase(test.TestCase):
         self._smbfs_driver._remotefsclient.mount.assert_called_once_with(
             self._FAKE_SHARE, self._FAKE_SHARE_OPTS.split())
 
-    def _test_copy_image_to_volume(self, wrong_size_after_fetch=False):
+    @mock.patch.object(image_utils, 'fetch_to_volume_format')
+    def test_copy_image_to_volume(self, mock_fetch):
         drv = self._smbfs_driver
-
-        vol_size_bytes = self._FAKE_VOLUME['size'] << 30
-
-        fake_img_info = mock.MagicMock()
-
-        if wrong_size_after_fetch:
-            fake_img_info.virtual_size = 2 * vol_size_bytes
-        else:
-            fake_img_info.virtual_size = vol_size_bytes
 
         drv.get_volume_format = mock.Mock(
             return_value=drv._DISK_FORMAT_VHDX)
@@ -466,43 +424,18 @@ class SmbFsTestCase(test.TestCase):
         drv.configuration.volume_dd_blocksize = (
             mock.sentinel.block_size)
 
-        with contextlib.nested(
-            mock.patch.object(image_utils,
-                              'fetch_to_volume_format'),
-            mock.patch.object(image_utils,
-                              'qemu_img_info')) as (
-                fake_fetch,
-                fake_qemu_img_info):
-
-            fake_qemu_img_info.return_value = fake_img_info
-
-            if wrong_size_after_fetch:
-                self.assertRaises(
-                    exception.ImageUnacceptable,
-                    drv.copy_image_to_volume,
-                    mock.sentinel.context, self._FAKE_VOLUME,
-                    mock.sentinel.image_service,
-                    mock.sentinel.image_id)
-            else:
-                drv.copy_image_to_volume(
-                    mock.sentinel.context, self._FAKE_VOLUME,
-                    mock.sentinel.image_service,
-                    mock.sentinel.image_id)
-                fake_fetch.assert_called_once_with(
-                    mock.sentinel.context, mock.sentinel.image_service,
-                    mock.sentinel.image_id, self._FAKE_VOLUME_PATH,
-                    drv._DISK_FORMAT_VHDX,
-                    mock.sentinel.block_size)
-                drv._do_extend_volume.assert_called_once_with(
-                    self._FAKE_VOLUME_PATH,
-                    self._FAKE_VOLUME['size'],
-                    self._FAKE_VOLUME['name'])
-
-    def test_copy_image_to_volume(self):
-        self._test_copy_image_to_volume()
-
-    def test_copy_image_to_volume_wrong_size_after_fetch(self):
-        self._test_copy_image_to_volume(wrong_size_after_fetch=True)
+        drv.copy_image_to_volume(
+            mock.sentinel.context, self._FAKE_VOLUME,
+            mock.sentinel.image_service,
+            mock.sentinel.image_id)
+        mock_fetch.assert_called_once_with(
+            mock.sentinel.context, mock.sentinel.image_service,
+            mock.sentinel.image_id, self._FAKE_VOLUME_PATH,
+            drv._DISK_FORMAT_VHDX,
+            mock.sentinel.block_size)
+        drv._do_extend_volume.assert_called_once_with(
+            self._FAKE_VOLUME_PATH,
+            self._FAKE_VOLUME['size'])
 
     def test_get_capacity_info(self):
         fake_block_size = 4096.0
