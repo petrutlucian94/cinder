@@ -164,6 +164,9 @@ GET_VIRTUAL_DISK_INFO_VIRTUAL_STORAGE_TYPE = 6
 GET_VIRTUAL_DISK_INFO_PROVIDER_SUBTYPE = 7
 SET_VIRTUAL_DISK_INFO_PARENT_PATH = 1
 
+VHD_SIGNATURE = 'conectix'
+VHDX_SIGNATURE = 'vhdxfile'
+
 
 class VHDUtils(object):
 
@@ -224,12 +227,27 @@ class VHDUtils(object):
         kernel32.CloseHandle(handle)
 
     def _get_device_id_by_path(self, vhd_path):
-        ext = os.path.splitext(vhd_path)[1][1:].lower()
-        device_id = self._ext_device_id_map.get(ext)
-        if not device_id:
-            raise exception.VolumeBackendAPIException(
-                _("Unsupported virtual disk extension: %s") % ext)
-        return device_id
+        if os.path.exists(vhd_path):
+            with open(vhd_path, 'rb') as f:
+                # Read header
+                if f.read(8) == VHDX_SIGNATURE:
+                    return VIRTUAL_STORAGE_TYPE_DEVICE_VHDX
+
+                # Read footer
+                f.seek(0, 2)
+                file_size = f.tell()
+                if file_size >= 512:
+                    f.seek(-512, 2)
+                    if f.read(8) == VHD_SIGNATURE:
+                        return VIRTUAL_STORAGE_TYPE_DEVICE_VHD
+        else:
+            ext = os.path.splitext(vhd_path)[1][1:].lower()
+            device_id = self._ext_device_id_map.get(ext)
+            if device_id:
+                return device_id
+
+        raise exception.VolumeBackendAPIException(
+            _('Unsupported virtual disk format'))
 
     def resize_vhd(self, vhd_path, new_max_size):
         handle = self._open(vhd_path)

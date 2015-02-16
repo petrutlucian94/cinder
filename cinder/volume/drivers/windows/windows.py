@@ -28,6 +28,7 @@ from cinder.openstack.common import fileutils
 from cinder.openstack.common import log as logging
 from cinder.volume import driver
 from cinder.volume.drivers.windows import constants
+from cinder.volume.drivers.windows import imagecache
 from cinder.volume.drivers.windows import vhdutils
 from cinder.volume.drivers.windows import windows_utils
 
@@ -50,6 +51,7 @@ class WindowsDriver(driver.ISCSIDriver):
 
     def __init__(self, *args, **kwargs):
         super(WindowsDriver, self).__init__(*args, **kwargs)
+        self._imagecache = imagecache.WindowsImageCache()
         self.configuration = kwargs.get('configuration', None)
         if self.configuration:
             self.configuration.append_config_values(windows_opts)
@@ -167,19 +169,18 @@ class WindowsDriver(driver.ISCSIDriver):
         """Fetch the image from image_service and create a volume using it."""
         # Convert to VHD and file back to VHD
         vhd_type = self.utils.get_supported_vhd_type()
-        with image_utils.temporary_file(suffix='.vhd') as tmp:
-            volume_path = self.local_path(volume)
-            image_utils.fetch_to_vhd(context, image_service, image_id, tmp,
-                                     self.configuration.volume_dd_blocksize)
-            # The vhd must be disabled and deleted before being replaced with
-            # the desired image.
-            self.utils.change_disk_status(volume['name'], False)
-            os.unlink(volume_path)
-            self.vhdutils.convert_vhd(tmp, volume_path,
-                                      vhd_type)
-            self.vhdutils.resize_vhd(volume_path,
-                                     volume['size'] << 30)
-            self.utils.change_disk_status(volume['name'], True)
+        volume_subformat = constants.VHD_SUBFORMAT_MAP[vhd_type]
+        volume_path = self.local_path(volume)
+        volume_format = os.path.splitext(volume_path)[1][1:]
+
+        # The vhd must be disabled and deleted before being replaced with
+        # the desired image.
+        self.utils.change_disk_status(volume['name'], False)
+        os.unlink(volume_path)
+        self._imagecache.get_image(context, image_service, image_id,
+                                   volume_path, volume_format, volume['size'],
+                                   image_subformat=volume_subformat)
+        self.utils.change_disk_status(volume['name'], True)
 
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
         """Copy the volume to the specified image."""
