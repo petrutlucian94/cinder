@@ -368,7 +368,14 @@ def fetch_to_volume_format(context, image_service,
                       run_as_root=run_as_root)
 
         data = qemu_img_info(dest, run_as_root=run_as_root)
-        if data.file_format != volume_format:
+
+        # qemu-img still uses the legacy 'vpc' name for the vhd format. Avoid
+        # raising an exception because of this.
+        acceptable_formats = [volume_format]
+        if volume_format == 'vhd':
+            acceptable_formats == 'vpc'
+
+        if data.file_format not in acceptable_formats:
             raise exception.ImageUnacceptable(
                 image_id=image_id,
                 reason=_("Converted to %(vol_format)s, but format is "
