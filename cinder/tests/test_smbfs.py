@@ -85,6 +85,7 @@ class SmbFsTestCase(test.TestCase):
             return_value=self._FAKE_MNT_POINT)
         self._smbfs_driver._execute = mock.Mock()
         self._smbfs_driver.base = self._FAKE_MNT_BASE
+        self._smbfs_driver._imagecache = mock.Mock()
         self._smbfs_driver._alloc_info_file_path = (
             self._FAKE_ALLOCATION_DATA_PATH)
 
@@ -624,30 +625,25 @@ class SmbFsTestCase(test.TestCase):
             self._FAKE_SHARE, self._FAKE_SHARE_OPTS.split())
 
     @mock.patch.object(image_utils, 'fetch_to_volume_format')
-    def test_copy_image_to_volume(self, mock_fetch):
+    @mock.patch.object(fileutils, 'delete_if_exists')
+    def test_copy_image_to_volume(self, mock_delete_if_exists, mock_fetch):
         drv = self._smbfs_driver
 
         drv.get_volume_format = mock.Mock(
             return_value=drv._DISK_FORMAT_VHDX)
         drv.local_path = mock.Mock(
             return_value=self._FAKE_VOLUME_PATH)
-        drv._do_extend_volume = mock.Mock()
-        drv.configuration = mock.MagicMock()
-        drv.configuration.volume_dd_blocksize = (
-            mock.sentinel.block_size)
 
         drv.copy_image_to_volume(
             mock.sentinel.context, self._FAKE_VOLUME,
             mock.sentinel.image_service,
             mock.sentinel.image_id)
-        mock_fetch.assert_called_once_with(
+
+        mock_delete_if_exists.assert_called_once_with(self._FAKE_VOLUME_PATH)
+        drv._imagecache.get_image.assert_called_once_with(
             mock.sentinel.context, mock.sentinel.image_service,
             mock.sentinel.image_id, self._FAKE_VOLUME_PATH,
-            drv._DISK_FORMAT_VHDX,
-            mock.sentinel.block_size)
-        drv._do_extend_volume.assert_called_once_with(
-            self._FAKE_VOLUME_PATH,
-            self._FAKE_VOLUME['size'])
+            drv._DISK_FORMAT_VHDX, self._FAKE_VOLUME['size'])
 
     def test_get_capacity_info(self):
         fake_block_size = 4096.0
