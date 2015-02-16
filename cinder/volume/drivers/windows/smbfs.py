@@ -28,6 +28,7 @@ from cinder.openstack.common import fileutils
 from cinder.openstack.common import log as logging
 from cinder import utils
 from cinder.volume.drivers import smbfs
+from cinder.volume.drivers.windows import imagecache
 from cinder.volume.drivers.windows import remotefs
 from cinder.volume.drivers.windows import vhdutils
 
@@ -57,6 +58,7 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             'cifs', root_helper=None, smbfs_mount_point_base=self.base,
             smbfs_mount_options=opts)
         self.vhdutils = vhdutils.VHDUtils()
+        self._imagecache = imagecache.WindowsImageCache()
 
     def do_setup(self, context):
         self._check_os_platform()
@@ -204,20 +206,6 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
         finally:
             if temp_path:
                 self._delete(temp_path)
-
-    def copy_image_to_volume(self, context, volume, image_service, image_id):
-        """Fetch the image from image_service and write it to the volume."""
-        volume_path = self.local_path(volume)
-        volume_format = self.get_volume_format(volume, qemu_format=True)
-        self._delete(volume_path)
-
-        image_utils.fetch_to_volume_format(
-            context, image_service, image_id,
-            volume_path, volume_format,
-            self.configuration.volume_dd_blocksize)
-
-        self.vhdutils.resize_vhd(volume_path,
-                                 volume['size'] * units.Gi)
 
     def _copy_volume_from_snapshot(self, snapshot, volume, volume_size):
         """Copy data from snapshot to destination volume."""
