@@ -487,28 +487,10 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         self._check_extend_volume_support(volume, size_gb)
         LOG.info(_LI('Resizing file to %sG...') % size_gb)
 
-        self._do_extend_volume(volume_path, size_gb, volume['name'])
+        self._do_extend_volume(volume_path, size_gb)
 
-    def _do_extend_volume(self, volume_path, size_gb, volume_name):
-        info = self._qemu_img_info(volume_path, volume_name)
-        fmt = info.file_format
-
-        # Note(lpetrut): as for version 2.0, qemu-img cannot resize
-        # vhd/x images. For the moment, we'll just use an intermediary
-        # conversion in order to be able to do the resize.
-        if fmt in (self._DISK_FORMAT_VHDX, self._DISK_FORMAT_VHD_LEGACY):
-            temp_image = volume_path + '.tmp'
-            image_utils.convert_image(volume_path, temp_image,
-                                      self._DISK_FORMAT_RAW)
-            image_utils.resize_image(temp_image, size_gb)
-            image_utils.convert_image(temp_image, volume_path, fmt)
-            self._delete(temp_image)
-        else:
-            image_utils.resize_image(volume_path, size_gb)
-
-        if not self._is_file_size_equal(volume_path, size_gb):
-            raise exception.ExtendVolumeError(
-                reason='Resizing image file failed.')
+    def _do_extend_volume(self, volume_path, size_gb):
+        image_utils.resize_image(volume_path, size_gb)
 
     def _check_extend_volume_support(self, volume, size_gb):
         volume_path = self.local_path(volume)
@@ -579,16 +561,7 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
             self.configuration.volume_dd_blocksize)
 
         self._do_extend_volume(self.local_path(volume),
-                               volume['size'],
-                               volume['name'])
-
-        data = image_utils.qemu_img_info(self.local_path(volume))
-        virt_size = data.virtual_size / units.Gi
-        if virt_size != volume['size']:
-            raise exception.ImageUnacceptable(
-                image_id=image_id,
-                reason=(_("Expected volume size was %d") % volume['size'])
-                + (_(" but size is now %d.") % virt_size))
+                               volume['size'])
 
     @remotefs_drv.locked_volume_id_operation
     @update_allocation_data()
