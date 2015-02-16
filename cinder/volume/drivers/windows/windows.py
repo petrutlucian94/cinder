@@ -24,10 +24,13 @@ import os
 from oslo_config import cfg
 from oslo_log import log as logging
 
+from cinder import exception
+from cinder.i18n import _
 from cinder.image import image_utils
 from cinder.openstack.common import fileutils
 from cinder.volume import driver
 from cinder.volume.drivers.windows import constants
+from cinder.volume.drivers.windows import imagecache
 from cinder.volume.drivers.windows import vhdutils
 from cinder.volume.drivers.windows import windows_utils
 from cinder.volume import utils
@@ -51,6 +54,7 @@ class WindowsDriver(driver.ISCSIDriver):
 
     def __init__(self, *args, **kwargs):
         super(WindowsDriver, self).__init__(*args, **kwargs)
+        self._imagecache = imagecache.WindowsImageCache()
         self.configuration = kwargs.get('configuration', None)
         if self.configuration:
             self.configuration.append_config_values(windows_opts)
@@ -67,6 +71,11 @@ class WindowsDriver(driver.ISCSIDriver):
     def check_for_setup_error(self):
         """Check that the driver is working and can communicate."""
         self.utils.check_for_setup_error()
+        diff_images_supported = self.utils.check_min_windows_version(6, 3)
+        if CONF.imagecache.use_cow_images and not diff_images_supported:
+            err_msg = _("Windows Server 2012 R2 or later is required in "
+                        "order to use differencing images as iSCSI disks.")
+            raise exception.VolumeBackendAPIException(err_msg)
 
     def initialize_connection(self, volume, connector):
         """Driver entry point to attach a volume to an instance."""
@@ -176,19 +185,18 @@ class WindowsDriver(driver.ISCSIDriver):
         """Fetch the image from image_service and create a volume using it."""
         # Convert to VHD and file back to VHD
         vhd_type = self.utils.get_supported_vhd_type()
-        with image_utils.temporary_file(suffix='.vhd') as tmp:
-            volume_path = self.local_path(volume)
-            image_utils.fetch_to_vhd(context, image_service, image_id, tmp,
-                                     self.configuration.volume_dd_blocksize)
-            # The vhd must be disabled and deleted before being replaced with
-            # the desired image.
-            self.utils.change_disk_status(volume['name'], False)
-            os.unlink(volume_path)
-            self.vhdutils.convert_vhd(tmp, volume_path,
-                                      vhd_type)
-            self.vhdutils.resize_vhd(volume_path,
-                                     volume['size'] << 30)
-            self.utils.change_disk_status(volume['name'], True)
+        volume_subformat = constants.VHD_SUBFORMAT_MAP[vhd_type]
+        volume_path = self.local_path(volume)
+        volume_format = os.path.splitext(volume_path)[1][1:]
+
+        # The vhd must be disabled and deleted before being replaced with
+        # the desired image.
+        self.utils.change_disk_status(volume['name'], False)
+        os.unlink(volume_path)
+        self._imagecache.get_image(context, image_service, image_id,
+                                   volume_path, volume_format, volume['size'],
+                                   image_subformat=volume_subformat)
+        self.utils.change_disk_status(volume['name'], True)
 
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
         """Copy the volume to the specified image."""

@@ -31,6 +31,7 @@ from cinder import test
 from cinder.tests.windows import db_fakes
 from cinder.volume import configuration as conf
 from cinder.volume.drivers.windows import constants
+from cinder.volume.drivers.windows import imagecache
 from cinder.volume.drivers.windows import vhdutils
 from cinder.volume.drivers.windows import windows
 from cinder.volume.drivers.windows import windows_utils
@@ -68,11 +69,22 @@ class TestWindowsDriver(test.TestCase):
         return os.path.join(CONF.windows_iscsi_lun_path,
                             str(volume['name']) + ".vhd")
 
+    def _fake_check_min_windows_version(self, major, minor, build=0):
+        return True
+
     def test_check_for_setup_errors(self):
         drv = self._driver
+
+        self.flags(use_cow_images=True, group='imagecache')
+
         self.mox.StubOutWithMock(windows_utils.WindowsUtils,
                                  'check_for_setup_error')
+        self.stubs.Set(windows_utils.WindowsUtils,
+                       'check_min_windows_version',
+                       self._fake_check_min_windows_version)
+
         windows_utils.WindowsUtils.check_for_setup_error()
+        windows_utils.WindowsUtils.check_min_windows_version(6, 3)
 
         self.mox.ReplayAll()
 
@@ -270,35 +282,20 @@ class TestWindowsDriver(test.TestCase):
                        fake_get_supported_type)
 
         self.mox.StubOutWithMock(os, 'unlink')
-        self.mox.StubOutWithMock(image_utils, 'create_temporary_file')
-        self.mox.StubOutWithMock(image_utils, 'fetch_to_vhd')
-        self.mox.StubOutWithMock(vhdutils.VHDUtils, 'convert_vhd')
-        self.mox.StubOutWithMock(vhdutils.VHDUtils, 'resize_vhd')
+        self.mox.StubOutWithMock(imagecache.WindowsImageCache, 'get_image')
         self.mox.StubOutWithMock(windows_utils.WindowsUtils,
                                  'change_disk_status')
 
-        fake_temp_path = r'C:\fake\temp\file'
-        if (CONF.image_conversion_dir and not
-                os.path.exists(CONF.image_conversion_dir)):
-            os.makedirs(CONF.image_conversion_dir)
-        image_utils.create_temporary_file(suffix='.vhd').AndReturn(
-            fake_temp_path)
-
         fake_volume_path = self.fake_local_path(volume)
 
-        image_utils.fetch_to_vhd(None, None, None,
-                                 fake_temp_path,
-                                 mox.IgnoreArg())
         windows_utils.WindowsUtils.change_disk_status(volume['name'],
-                                                      mox.IsA(bool))
-        vhdutils.VHDUtils.convert_vhd(fake_temp_path,
-                                      fake_volume_path,
-                                      constants.VHD_TYPE_FIXED)
-        vhdutils.VHDUtils.resize_vhd(fake_volume_path,
-                                     volume['size'] << 30)
-        windows_utils.WindowsUtils.change_disk_status(volume['name'],
-                                                      mox.IsA(bool))
+                                                      False)
         os.unlink(mox.IsA(str))
+        imagecache.WindowsImageCache.get_image(
+            None, None, None, fake_volume_path, 'vhd', volume['size'],
+            image_subformat=constants.VHD_SUBFORMAT_FIXED)
+        windows_utils.WindowsUtils.change_disk_status(volume['name'],
+                                                      True)
 
         self.mox.ReplayAll()
 
