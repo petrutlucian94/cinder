@@ -205,32 +205,6 @@ class WindowsSmbFsTestCase(test.TestCase):
     def test_copy_vhd_volume_to_image(self):
         self._test_copy_volume_to_image(volume_format='vhd')
 
-    def test_copy_image_to_volume(self):
-        drv = self._smbfs_driver
-        mock_extend_if_needed = drv._windows_utils.extend_vhd_if_needed
-
-        drv.get_volume_format = mock.Mock(
-            return_value=mock.sentinel.volume_format)
-        drv.local_path = mock.Mock(
-            return_value=self._FAKE_VOLUME_PATH)
-        drv.configuration = mock.MagicMock()
-        drv.configuration.volume_dd_blocksize = mock.sentinel.block_size
-
-        with mock.patch.object(image_utils,
-                               'fetch_to_volume_format') as fake_fetch:
-            drv.copy_image_to_volume(
-                mock.sentinel.context, self._FAKE_VOLUME,
-                mock.sentinel.image_service,
-                mock.sentinel.image_id)
-            fake_fetch.assert_called_once_with(
-                mock.sentinel.context,
-                mock.sentinel.image_service,
-                mock.sentinel.image_id,
-                self._FAKE_VOLUME_PATH, mock.sentinel.volume_format,
-                mock.sentinel.block_size)
-            mock_extend_if_needed.assert_called_once_with(
-                self._FAKE_VOLUME_PATH, self._FAKE_VOLUME['size'])
-
     def test_copy_volume_from_snapshot(self):
         drv = self._smbfs_driver
         mock_extend_if_needed = drv._windows_utils.extend_vhd_if_needed
