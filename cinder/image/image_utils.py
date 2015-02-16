@@ -109,12 +109,28 @@ def check_qemu_img_version(minimum_version):
         raise exception.VolumeBackendAPIException(data=_msg)
 
 
-def convert_image(source, dest, out_format, bps_limit=None, run_as_root=True):
+def _get_qemu_convert_cmd(src, dest, out_format,
+                          out_subformat=None, cache_mode=None):
+    if out_format == 'vhd':
+        # qemu-img still uses the legacy vpc name
+        out_format == 'vpc'
+
+    cmd = ['qemu-img', 'convert', '-O', out_format]
+
+    if cache_mode:
+        cmd += ('-t', cache_mode)
+
+    if out_subformat:
+        cmd += ('-o', 'subformat=%s' % out_subformat)
+
+    cmd += (src, dest)
+
+    return cmd
+
+
+def convert_image(source, dest, out_format, out_subformat=None,
+                  bps_limit=None, run_as_root=True):
     """Convert image to other format."""
-
-    cmd = ('qemu-img', 'convert',
-           '-O', out_format, source, dest)
-
     # Check whether O_DIRECT is supported and set '-t none' if it is
     # This is needed to ensure that all data hit the device before
     # it gets unmapped remotely from the host for some backends
@@ -128,14 +144,20 @@ def convert_image(source, dest, out_format, bps_limit=None, run_as_root=True):
             volume_utils.check_for_odirect_support(source,
                                                    dest,
                                                    'oflag=direct')):
-        cmd = ('qemu-img', 'convert',
-               '-t', 'none',
-               '-O', out_format, source, dest)
+        cache_mode = 'none'
+    else:
+        # use default
+        cache_mode = None
+
+    cmd = _get_qemu_convert_cmd(source, dest,
+                                out_format=out_format,
+                                out_subformat=out_subformat,
+                                cache_mode=cache_mode)
 
     start_time = timeutils.utcnow()
     cgcmd = volume_utils.setup_blkio_cgroup(source, dest, bps_limit)
     if cgcmd:
-        cmd = tuple(cgcmd) + cmd
+        cmd = list(cgcmd) + cmd
     utils.execute(*cmd, run_as_root=run_as_root)
 
     duration = timeutils.delta_seconds(start_time, timeutils.utcnow())
@@ -255,7 +277,7 @@ def fetch_to_raw(context, image_service,
 def fetch_to_volume_format(context, image_service,
                            image_id, dest, volume_format, blocksize,
                            user_id=None, project_id=None, size=None,
-                           run_as_root=True):
+                           volume_subformat=None, run_as_root=True):
     qemu_img = True
     image_meta = image_service.show(context, image_id)
 
@@ -341,6 +363,7 @@ def fetch_to_volume_format(context, image_service,
         LOG.debug("%s was %s, converting to %s " % (image_id, fmt,
                                                     volume_format))
         convert_image(tmp, dest, volume_format,
+                      out_subformat=volume_subformat,
                       bps_limit=CONF.volume_copy_bps_limit,
                       run_as_root=run_as_root)
 
