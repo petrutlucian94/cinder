@@ -288,8 +288,9 @@ class TestCase(testtools.TestCase):
 
     def flags(self, **kw):
         """Override CONF variables for a test."""
-        for k, v in kw.items():
-            self.override_config(k, v)
+        group = kw.pop('group', None)
+        for k, v in kw.iteritems():
+            self.override_config(k, v, group)
 
     def log_level(self, level):
         """Set logging level to the specified value."""
