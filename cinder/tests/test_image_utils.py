@@ -550,6 +550,161 @@ class TestUtils(test.TestCase):
         m.VerifyAll()
 
 
+class TestQemuImgInfo(test.TestCase):
+    @mock.patch('cinder.openstack.common.imageutils.QemuImgInfo')
+    @mock.patch('cinder.utils.execute')
+    def test_qemu_img_info(self, mock_exec, mock_info):
+        mock_out = mock.sentinel.out
+        mock_err = mock.sentinel.err
+        test_path = mock.sentinel.path
+        mock_exec.return_value = (mock_out, mock_err)
+
+        output = image_utils.qemu_img_info(test_path)
+        mock_exec.assert_called_once_with('env', 'LC_ALL=C', 'qemu-img',
+                                          'info', test_path, run_as_root=True)
+        self.assertEqual(mock_info.return_value, output)
+
+    @mock.patch('cinder.openstack.common.imageutils.QemuImgInfo')
+    @mock.patch('cinder.utils.execute')
+    def test_qemu_img_info_not_root(self, mock_exec, mock_info):
+        mock_out = mock.sentinel.out
+        mock_err = mock.sentinel.err
+        test_path = mock.sentinel.path
+        mock_exec.return_value = (mock_out, mock_err)
+
+        output = image_utils.qemu_img_info(test_path, run_as_root=False)
+        mock_exec.assert_called_once_with('env', 'LC_ALL=C', 'qemu-img',
+                                          'info', test_path, run_as_root=False)
+        self.assertEqual(mock_info.return_value, output)
+
+    @mock.patch('cinder.image.image_utils.os')
+    @mock.patch('cinder.openstack.common.imageutils.QemuImgInfo')
+    @mock.patch('cinder.utils.execute')
+    def test_qemu_img_info_on_nt(self, mock_exec, mock_info, mock_os):
+        mock_out = mock.sentinel.out
+        mock_err = mock.sentinel.err
+        test_path = mock.sentinel.path
+        mock_exec.return_value = (mock_out, mock_err)
+        mock_os.name = 'nt'
+
+        output = image_utils.qemu_img_info(test_path)
+        mock_exec.assert_called_once_with('qemu-img', 'info', test_path,
+                                          run_as_root=True)
+        self.assertEqual(mock_info.return_value, output)
+
+    @mock.patch('cinder.utils.execute')
+    def test_get_qemu_img_version(self, mock_exec):
+        mock_out = "qemu-img version 2.0.0"
+        mock_err = mock.sentinel.err
+        mock_exec.return_value = (mock_out, mock_err)
+
+        expected_version = [2, 0, 0]
+        version = image_utils.get_qemu_img_version()
+
+        mock_exec.assert_called_once_with('qemu-img', check_exit_code=False)
+        self.assertEqual(expected_version, version)
+
+    @mock.patch.object(image_utils, 'get_qemu_img_version')
+    def test_validate_qemu_img_version(self, mock_get_qemu_img_version):
+        fake_current_version = [1, 8]
+        mock_get_qemu_img_version.return_value = fake_current_version
+        minimum_version = '1.8'
+
+        image_utils.check_qemu_img_version(minimum_version)
+
+        mock_get_qemu_img_version.assert_called_once_with()
+
+    @mock.patch.object(image_utils, 'get_qemu_img_version')
+    def test_validate_unsupported_qemu_img_version(self,
+                                                   mock_get_qemu_img_version):
+        fake_current_version = [1, 8]
+        mock_get_qemu_img_version.return_value = fake_current_version
+        minimum_version = '2.0'
+
+        self.assertRaises(exception.VolumeBackendAPIException,
+                          image_utils.check_qemu_img_version,
+                          minimum_version)
+
+        mock_get_qemu_img_version.assert_called_once_with()
+
+
+class TestConvertImage(test.TestCase):
+    @mock.patch('cinder.image.image_utils.os.stat')
+    @mock.patch('cinder.utils.execute')
+    @mock.patch('cinder.volume.utils.setup_blkio_cgroup',
+                return_value=(mock.sentinel.cgcmd, ))
+    @mock.patch('cinder.utils.is_blk_device', return_value=True)
+    def test_defaults_block_dev(self, mock_isblk, mock_cgroup, mock_exec,
+                                mock_stat):
+        source = mock.sentinel.source
+        dest = mock.sentinel.dest
+        out_format = mock.sentinel.out_format
+        cgcmd = mock.sentinel.cgcmd
+        mock_stat.return_value.st_size = 1048576
+
+        with mock.patch('cinder.volume.utils.check_for_odirect_support',
+                        return_value=True):
+            output = image_utils.convert_image(source, dest, out_format)
+
+            self.assertIsNone(output)
+            mock_exec.assert_called_once_with(cgcmd, 'qemu-img', 'convert',
+                                              '-t', 'none', '-O', out_format,
+                                              source, dest, run_as_root=True)
+
+        mock_exec.reset_mock()
+
+        with mock.patch('cinder.volume.utils.check_for_odirect_support',
+                        return_value=False):
+            output = image_utils.convert_image(source, dest, out_format)
+
+            self.assertIsNone(output)
+            mock_exec.assert_called_once_with(cgcmd, 'qemu-img', 'convert',
+                                              '-O', out_format, source, dest,
+                                              run_as_root=True)
+
+    @mock.patch('cinder.volume.utils.check_for_odirect_support',
+                return_value=True)
+    @mock.patch('cinder.image.image_utils.os.stat')
+    @mock.patch('cinder.utils.execute')
+    @mock.patch('cinder.volume.utils.setup_blkio_cgroup',
+                return_value=(mock.sentinel.cgcmd, ))
+    @mock.patch('cinder.utils.is_blk_device', return_value=False)
+    def test_defaults_not_block_dev(self, mock_isblk, mock_cgroup, mock_exec,
+                                    mock_stat, mock_odirect):
+        source = mock.sentinel.source
+        dest = mock.sentinel.dest
+        out_format = mock.sentinel.out_format
+        cgcmd = mock.sentinel.cgcmd
+        mock_stat.return_value.st_size = 1048576
+
+        output = image_utils.convert_image(source, dest, out_format)
+
+        self.assertIsNone(output)
+        mock_exec.assert_called_once_with(cgcmd, 'qemu-img', 'convert', '-O',
+                                          out_format, source, dest,
+                                          run_as_root=True)
+
+
+class TestResizeImage(test.TestCase):
+    @mock.patch('cinder.utils.execute')
+    def test_defaults(self, mock_exec):
+        source = mock.sentinel.source
+        size = mock.sentinel.size
+        output = image_utils.resize_image(source, size)
+        self.assertIsNone(output)
+        mock_exec.assert_called_once_with('qemu-img', 'resize', source,
+                                          'sentinel.sizeG', run_as_root=False)
+
+    @mock.patch('cinder.utils.execute')
+    def test_run_as_root(self, mock_exec):
+        source = mock.sentinel.source
+        size = mock.sentinel.size
+        output = image_utils.resize_image(source, size, run_as_root=True)
+        self.assertIsNone(output)
+        mock_exec.assert_called_once_with('qemu-img', 'resize', source,
+                                          'sentinel.sizeG', run_as_root=True)
+
+
 class TestExtractTo(test.TestCase):
     def test_extract_to_calls_tar(self):
         mox = self.mox

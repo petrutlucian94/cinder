@@ -47,6 +47,7 @@ class WindowsDriver(driver.ISCSIDriver):
     """Executes volume driver commands on Windows Storage server."""
 
     VERSION = '1.0.0'
+    _MINIMUM_QEMU_IMG_VERSION = '1.6'
 
     def __init__(self, *args, **kwargs):
         super(WindowsDriver, self).__init__(*args, **kwargs)
@@ -65,6 +66,7 @@ class WindowsDriver(driver.ISCSIDriver):
 
     def check_for_setup_error(self):
         """Check that the driver is working and can communicate."""
+        image_utils.check_qemu_img_version(self._MINIMUM_QEMU_IMG_VERSION)
         self.utils.check_for_setup_error()
 
     def initialize_connection(self, volume, connector):
