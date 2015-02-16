@@ -139,7 +139,7 @@ class TestConvertImage(test.TestCase):
 
             self.assertIsNone(output)
             mock_exec.assert_called_once_with(cgcmd, 'qemu-img', 'convert',
-                                              '-t', 'none', '-O', out_format,
+                                              '-O', out_format, '-t', 'none',
                                               source, dest, run_as_root=True)
 
         mock_exec.reset_mock()
@@ -160,19 +160,23 @@ class TestConvertImage(test.TestCase):
     @mock.patch('cinder.volume.utils.setup_blkio_cgroup',
                 return_value=(mock.sentinel.cgcmd, ))
     @mock.patch('cinder.utils.is_blk_device', return_value=False)
-    def test_defaults_not_block_dev(self, mock_isblk, mock_cgroup, mock_exec,
-                                    mock_stat, mock_odirect):
+    def test_not_block_dev(self, mock_isblk, mock_cgroup, mock_exec,
+                           mock_stat, mock_odirect):
         source = mock.sentinel.source
         dest = mock.sentinel.dest
         out_format = mock.sentinel.out_format
+        out_subformat = 'fake_subformat'
         cgcmd = mock.sentinel.cgcmd
         mock_stat.return_value.st_size = 1048576
 
-        output = image_utils.convert_image(source, dest, out_format)
+        output = image_utils.convert_image(source, dest, out_format,
+                                           out_subformat=out_subformat)
 
         self.assertIsNone(output)
         mock_exec.assert_called_once_with(cgcmd, 'qemu-img', 'convert', '-O',
-                                          out_format, source, dest,
+                                          out_format, '-o',
+                                          'subformat=%s' % out_subformat,
+                                          source, dest,
                                           run_as_root=True)
 
 
@@ -260,31 +264,6 @@ class TestSetVhdParent(test.TestCase):
 
         image_utils.set_vhd_parent('child', 'parent')
         mox.VerifyAll()
-
-
-class TestFixVhdChain(test.TestCase):
-    def test_empty_chain(self):
-        mox = self.mox
-        mox.StubOutWithMock(image_utils, 'set_vhd_parent')
-
-        mox.ReplayAll()
-        image_utils.fix_vhd_chain([])
-
-    def test_single_vhd_file_chain(self):
-        mox = self.mox
-        mox.StubOutWithMock(image_utils, 'set_vhd_parent')
-
-        mox.ReplayAll()
-        image_utils.fix_vhd_chain(['0.vhd'])
-
-    def test_chain_with_two_elements(self):
-        mox = self.mox
-        mox.StubOutWithMock(image_utils, 'set_vhd_parent')
-
-        image_utils.set_vhd_parent('0.vhd', '1.vhd')
-
-        mox.ReplayAll()
-        image_utils.fix_vhd_chain(['0.vhd', '1.vhd'])
 
 
 class TestGetSize(test.TestCase):
