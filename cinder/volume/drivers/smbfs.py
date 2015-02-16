@@ -29,6 +29,7 @@ from cinder import exception
 from cinder.i18n import _, _LI, _LW
 from cinder.image import image_utils
 from cinder import utils
+from cinder.volume.drivers import imagecache
 from cinder.volume.drivers import remotefs as remotefs_drv
 
 
@@ -126,8 +127,10 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
             'cifs', root_helper, execute=execute,
             smbfs_mount_point_base=self.base,
             smbfs_mount_options=opts)
-        self.img_suffix = None
+
         self._alloc_info_file_path = CONF.smbfs_allocation_info_file_path
+        self._imagecache = imagecache.ImageCache(
+            block_size=self.configuration.volume_dd_blocksize)
 
     def _qemu_img_info(self, path, volume_name):
         return super(SmbfsDriver, self)._qemu_img_info_base(
@@ -353,7 +356,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
             self._create_windows_image(volume_path, volume_size,
                                        volume_format)
         else:
-            self.img_suffix = None
             if volume_format == self._DISK_FORMAT_QCOW2:
                 self._create_qcow2_file(volume_path, volume_size)
             elif self.configuration.smbfs_sparsed_volumes:
@@ -552,15 +554,13 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
 
     def copy_image_to_volume(self, context, volume, image_service, image_id):
         """Fetch the image from image_service and write it to the volume."""
-        volume_format = self.get_volume_format(volume, qemu_format=True)
+        volume_format = self.get_volume_format(volume)
+        volume_path = self.local_path(volume)
+        fileutils.delete_if_exists(volume_path)
 
-        image_utils.fetch_to_volume_format(
-            context, image_service, image_id,
-            self.local_path(volume), volume_format,
-            self.configuration.volume_dd_blocksize)
-
-        self._do_extend_volume(self.local_path(volume),
-                               volume['size'])
+        self._imagecache.get_image(context, image_service, image_id,
+                                   volume_path, volume_format,
+                                   volume['size'])
 
     @remotefs_drv.locked_volume_id_operation
     @update_allocation_data()
