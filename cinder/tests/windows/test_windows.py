@@ -71,8 +71,12 @@ class TestWindowsDriver(test.TestCase):
 
     def test_check_for_setup_errors(self):
         drv = self._driver
+        self.mox.StubOutWithMock(image_utils,
+                                 'check_qemu_img_version')
         self.mox.StubOutWithMock(windows_utils.WindowsUtils,
                                  'check_for_setup_error')
+
+        image_utils.check_qemu_img_version(mox.IsA(str))
         windows_utils.WindowsUtils.check_for_setup_error()
 
         self.mox.ReplayAll()

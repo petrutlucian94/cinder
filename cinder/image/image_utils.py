@@ -27,6 +27,7 @@ we should look at maybe pushing this up to Oslo
 import contextlib
 import math
 import os
+import re
 import tempfile
 
 from oslo_concurrency import processutils
@@ -35,7 +36,7 @@ from oslo_utils import timeutils
 from oslo_utils import units
 
 from cinder import exception
-from cinder.i18n import _
+from cinder.i18n import _, _LW
 from cinder.openstack.common import fileutils
 from cinder.openstack.common import imageutils
 from cinder.openstack.common import log as logging
@@ -60,6 +61,31 @@ def qemu_img_info(path, run_as_root=True):
         cmd = cmd[2:]
     out, _err = utils.execute(*cmd, run_as_root=run_as_root)
     return imageutils.QemuImgInfo(out)
+
+
+def get_qemu_img_version():
+    info, _ = utils.execute('qemu-img', check_exit_code=False)
+    pattern = r"qemu-img version ([0-9\.]*)"
+    version = re.match(pattern, info)
+    if not version:
+        LOG.warning(_LW("qemu-img is not installed."))
+        return None
+    return _get_version_from_string(version.groups()[0])
+
+
+def _get_version_from_string(version_string):
+    return [int(x) for x in version_string.split('.')]
+
+
+def check_qemu_img_version(minimum_version):
+    qemu_version = get_qemu_img_version()
+    if qemu_version < _get_version_from_string(minimum_version):
+        current_version = '.'.join((str(element) for element in qemu_version))
+        _msg = _('qemu-img %(minimum_version)s or later is required by '
+                 'this volume driver. Current qemu-img version: '
+                 '%(current_version)s') % {'minimum_version': minimum_version,
+                                           'current_version': current_version}
+        raise exception.VolumeBackendAPIException(data=_msg)
 
 
 def convert_image(source, dest, out_format, bps_limit=None, run_as_root=True):

@@ -68,6 +68,41 @@ class TestQemuImgInfo(test.TestCase):
                                           run_as_root=True)
         self.assertEqual(mock_info.return_value, output)
 
+    @mock.patch('cinder.utils.execute')
+    def test_get_qemu_img_version(self, mock_exec):
+        mock_out = "qemu-img version 2.0.0"
+        mock_err = mock.sentinel.err
+        mock_exec.return_value = (mock_out, mock_err)
+
+        expected_version = [2, 0, 0]
+        version = image_utils.get_qemu_img_version()
+
+        mock_exec.assert_called_once_with('qemu-img', check_exit_code=False)
+        self.assertEqual(expected_version, version)
+
+    @mock.patch.object(image_utils, 'get_qemu_img_version')
+    def test_validate_qemu_img_version(self, mock_get_qemu_img_version):
+        fake_current_version = [1, 8]
+        mock_get_qemu_img_version.return_value = fake_current_version
+        minimum_version = '1.8'
+
+        image_utils.check_qemu_img_version(minimum_version)
+
+        mock_get_qemu_img_version.assert_called_once_with()
+
+    @mock.patch.object(image_utils, 'get_qemu_img_version')
+    def test_validate_unsupported_qemu_img_version(self,
+                                                   mock_get_qemu_img_version):
+        fake_current_version = [1, 8]
+        mock_get_qemu_img_version.return_value = fake_current_version
+        minimum_version = '2.0'
+
+        self.assertRaises(exception.VolumeBackendAPIException,
+                          image_utils.check_qemu_img_version,
+                          minimum_version)
+
+        mock_get_qemu_img_version.assert_called_once_with()
+
 
 class TestConvertImage(test.TestCase):
     @mock.patch('cinder.image.image_utils.os.stat')
