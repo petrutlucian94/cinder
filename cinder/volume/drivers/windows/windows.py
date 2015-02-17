@@ -23,6 +23,8 @@ import os
 
 from oslo_config import cfg
 
+from cinder import exception
+from cinder.i18n import _
 from cinder.image import image_utils
 from cinder.openstack.common import fileutils
 from cinder.openstack.common import log as logging
@@ -70,6 +72,11 @@ class WindowsDriver(driver.ISCSIDriver):
         """Check that the driver is working and can communicate."""
         image_utils.check_qemu_img_version(self._MINIMUM_QEMU_IMG_VERSION)
         self.utils.check_for_setup_error()
+        diff_images_supported = self.utils.check_min_windows_version(6, 3)
+        if CONF.imagecache.use_cow_images and not diff_images_supported:
+            err_msg = _("Windows Server 2012 R2 or later is required in "
+                        "order to use differencing images as iSCSI disks.")
+            raise exception.VolumeBackendAPIException(err_msg)
 
     def initialize_connection(self, volume, connector):
         """Driver entry point to attach a volume to an instance."""

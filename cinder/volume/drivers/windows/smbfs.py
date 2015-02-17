@@ -66,7 +66,7 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             'cifs', root_helper=None, smbfs_mount_point_base=self.base,
             smbfs_mount_options=opts)
         self.vhdutils = vhdutils.VHDUtils()
-        self._imagecache = imagecache.WindowsImageCache()
+        self._imagecache = imagecache.WindowsImageCache(smb_backend=True)
         self._alloc_info_file_path = CONF.allocation_info_file_path
 
     def do_setup(self, context):
@@ -210,6 +210,14 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
         self._update_allocation_data(volume, size_gb)
 
     def _do_extend_volume(self, volume_path, size_gb):
+        parent_path = self.vhdutils.get_vhd_parent_path(volume_path)
+        ext = os.path.splitext(volume_path)[1][1:]
+
+        # Differencing vhd images cannot be resized, so the image must be
+        # flattened first.
+        if parent_path and ext.lower() == 'vhd':
+            self.vhdutils.flatten_vhd(volume_path)
+
         self.vhdutils.resize_vhd(volume_path, size_gb * units.Gi)
 
     @utils.synchronized('smbfs', external=False)
@@ -275,3 +283,17 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
         self.vhdutils.convert_vhd(snapshot_path,
                                   volume_path)
         self.vhdutils.resize_vhd(volume_path, volume_size * units.Gi)
+
+    def _get_backing_file_full_path(self, volume, filename):
+        # If caching images is enabled and differencing images are used for
+        # this purpose, the first image from a chain of snapshots will be
+        # placed in the configured image cache folder.
+        path = os.path.join(self._local_volume_dir(volume), filename)
+        if not os.path.exists(path):
+            path = os.path.join(CONF.imagecache.image_cache_dir,
+                                filename)
+            if not os.path.exists(path):
+                err_msg = _("Could not locate one of the backing files "
+                            "used by volume %s") % volume['name']
+                raise exception.SmbfsException(err_msg)
+        return path

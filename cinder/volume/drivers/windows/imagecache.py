@@ -23,15 +23,15 @@ from cinder.openstack.common import fileutils
 from cinder.volume.drivers import imagecache
 from cinder.volume.drivers.windows import constants
 from cinder.volume.drivers.windows import vhdutils
+from cinder.volume.drivers.windows import windows_utils
 
 image_cache_opts = [
-    cfg.StrOpt('image_cache_dir',
-               default='$state_path/image_cache',
-               help='Directory where base images are cached.'),
-    cfg.BoolOpt('cache_fetched_images',
+    cfg.BoolOpt('use_cow_images',
                 default=False,
-                help=('Caching fetched images can greatly reduce the time '
-                      'required to create volumes from images.')),
+                help=('Create differencing images pointing to cached images '
+                      'when creating volumes from images instead of copying '
+                      'them. This reduces the time and disk space required '
+                      'for this operation even more.')),
 ]
 
 CONF = cfg.CONF
@@ -41,8 +41,15 @@ CONF.register_opts(image_cache_opts, 'imagecache')
 class WindowsImageCache(imagecache.ImageCache):
     _SUPPORTED_IMAGE_FORMATS = ('vhd', 'vpc', 'vhdx')
 
-    def __init__(self, block_size=None):
+    def __init__(self, smb_backend=False):
+        # Note: In case of a SMB backend, differencing images must be
+        # directly accessed by the hypervisors. In this case, the cached
+        # images will be placed on the same share as the according child
+        # images.
         self._vhdutils = vhdutils.VHDUtils()
+        self._utils = windows_utils.WindowsUtils()
+        self._cache_at_destination = (
+            smb_backend and CONF.imagecache.use_cow_images)
 
     def _fetch_image(self, context, image_service, image_id, fetch_path,
                      image_format, image_subformat):
@@ -51,6 +58,35 @@ class WindowsImageCache(imagecache.ImageCache):
                                        image_id, fetch_path)
 
         self._verify_image_format(fetch_path, image_format, image_subformat)
+
+    def _handle_requested_image(self, fetch_path, destination_path,
+                                image_size):
+        resize_needed = self._is_resize_needed(fetch_path, image_size)
+
+        if destination_path != fetch_path:
+            if CONF.imagecache.use_cow_images:
+                disk_format = os.path.splitext(fetch_path)[1][1:]
+                # Differencing vhd images cannot be resized, so the base image
+                # is resized instead. Note that the same workflow is used by
+                # the Nova Hyper-V driver.
+                if resize_needed and disk_format == 'vhd':
+                    base_path, ext = os.path.splitext(fetch_path)
+                    resized_disk_path = "%s_%s%s" % (base_path,
+                                                     image_size,
+                                                     ext)
+                    if not os.path.exists(resized_disk_path):
+                        self._utils.copy(fetch_path, resized_disk_path)
+                        self._resize_image(resized_disk_path, image_size)
+                    resize_needed = False
+                    fetch_path = resized_disk_path
+                self._vhdutils.create_differencing_vhd(path=destination_path,
+                                                       parent_path=fetch_path)
+
+            else:
+                self._utils.copy(fetch_path, destination_path)
+
+            if resize_needed:
+                self._resize_image(destination_path, image_size)
 
     def _convert_image(self, image_path, destination_path,
                        image_format, image_subformat):

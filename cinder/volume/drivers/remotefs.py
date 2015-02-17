@@ -705,7 +705,7 @@ class RemoteFSSnapDriver(RemoteFSDriver):
 
         while new_info['backing-filename']:
             filename = new_info['backing-filename']
-            path = os.path.join(self._local_volume_dir(volume), filename)
+            path = self._get_backing_file_full_path(volume, filename)
             info = self._qemu_img_info(path, volume['name'])
             backing_filename = info.backing_file
             new_info = {}
@@ -715,6 +715,11 @@ class RemoteFSSnapDriver(RemoteFSDriver):
             output.append(new_info)
 
         return output
+
+    def _get_backing_file_full_path(self, volume, filename):
+        # Note: some drivers using image caching might place the first
+        # image at a different path.
+        return os.path.join(self._local_volume_dir(volume), filename)
 
     def _get_hash_str(self, base_str):
         """Return a string that represents hash of base_str

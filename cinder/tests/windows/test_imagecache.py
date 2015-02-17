@@ -23,11 +23,13 @@ from cinder import test
 from cinder.volume.drivers.windows import constants
 from cinder.volume.drivers.windows import imagecache
 from cinder.volume.drivers.windows import vhdutils
+from cinder.volume.drivers.windows import windows_utils
 
 
 class WindowsImageCacheTestCase(test.TestCase):
     @mock.patch.object(vhdutils, 'VHDUtils')
-    def setUp(self, mock_vhdutils):
+    @mock.patch.object(windows_utils, 'WindowsUtils')
+    def setUp(self, mock_windows_utils, mock_vhdutils):
         super(WindowsImageCacheTestCase, self).setUp()
         self._imagecache = imagecache.WindowsImageCache()
 
@@ -54,6 +56,54 @@ class WindowsImageCacheTestCase(test.TestCase):
         mock_verifiy_image_format.assert_called_once_with(
             mock.sentinel.fetch_path, mock.sentinel.image_format,
             mock.sentinel.image_subformat)
+
+    @mock.patch.object(imagecache.WindowsImageCache, '_is_resize_needed')
+    @mock.patch.object(imagecache.WindowsImageCache, '_resize_image')
+    def _test_handle_requested_image(self, mock_resize,
+                                     mock_is_resize_needed,
+                                     disk_format='vhd',
+                                     use_cow_images=False):
+        mock_is_resize_needed.return_value = True
+        mock_create_diff = self._imagecache._vhdutils.create_differencing_vhd
+        self.flags(use_cow_images=use_cow_images, group='imagecache')
+
+        fake_image_name = 'fake_image_name'
+        fake_fetch_path = '%s.%s' % (fake_image_name, disk_format)
+        requested_size = 1
+
+        self._imagecache._handle_requested_image(
+            fake_fetch_path, mock.sentinel.dest_path, requested_size)
+
+        expected_base_path = fake_fetch_path
+        expected_resized_image = mock.sentinel.dest_path
+        if use_cow_images:
+            if disk_format == 'vhd':
+                expected_base_path = '%s_%s.%s' % (fake_image_name,
+                                                   requested_size,
+                                                   disk_format)
+                expected_resized_image = expected_base_path
+                self._imagecache._utils.copy.assert_called_once_with(
+                    fake_fetch_path, expected_resized_image)
+
+            mock_create_diff.assert_called_once_with(
+                path=mock.sentinel.dest_path,
+                parent_path=expected_base_path)
+        else:
+            self._imagecache._utils.copy.assert_called_once_with(
+                fake_fetch_path, mock.sentinel.dest_path)
+
+        mock_resize.assert_called_once_with(expected_resized_image,
+                                            requested_size)
+
+    def test_handle_requested_image_cow_images_disabled(self):
+        self._test_handle_requested_image()
+
+    def test_handle_requested_image_using_vhd_cow_images(self):
+        self._test_handle_requested_image(use_cow_images=True)
+
+    def test_handle_requested_image_using_vhdx_cow_images(self):
+        self._test_handle_requested_image(use_cow_images=True,
+                                          disk_format='vhdx')
 
     def _test_convert_image(self, image_subformat=None):
         if image_subformat:

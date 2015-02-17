@@ -47,16 +47,20 @@ class ImageCache(object):
 
     def __init__(self, block_size):
         self._block_size = block_size
+        self._cache_at_destination = False
 
     def get_image(self, context, image_service, image_id, destination_path,
                   image_format, image_size, image_subformat=None):
         @utils.synchronized(image_id)
         def _get_image():
+            image_cache_dir = self._get_image_cache_dir(destination_path)
             fetch_path = self._get_fetch_path(image_id, destination_path,
-                                              image_format, image_subformat)
+                                              image_format, image_subformat,
+                                              image_cache_dir)
             if not os.path.exists(fetch_path):
                 # Check for cached images having a different format
-                cached_images = self._get_cached_images(image_id)
+                cached_images = self._get_cached_images(image_id,
+                                                        image_cache_dir)
                 if cached_images:
                     self._convert_image(cached_images[0],
                                         fetch_path,
@@ -94,24 +98,24 @@ class ImageCache(object):
             self._resize_image(destination_path, image_size)
 
     def _get_fetch_path(self, image_id, destination_path, image_format,
-                        image_subformat):
+                        image_subformat, image_cache_dir):
         if CONF.imagecache.cache_fetched_images:
-            return self._get_cached_image_path(image_id, image_format,
-                                               image_subformat)
+            return self._get_cached_image_path(image_id,
+                                               image_format,
+                                               image_subformat,
+                                               image_cache_dir)
         else:
             return destination_path
 
     def _get_cached_image_path(self, image_id, image_format,
-                               image_subformat):
+                               image_subformat, image_cache_dir):
         image_subformat = "-" + image_subformat if image_subformat else ''
         image_file_name = self._CACHED_IMAGE_NAME_TEMPLATE % (
             image_id, image_subformat, image_format)
-        return os.path.join(CONF.imagecache.image_cache_dir,
-                            image_file_name)
+        return os.path.join(image_cache_dir, image_file_name)
 
-    def _get_cached_images(self, image_id):
-        pattern = os.path.join(CONF.imagecache.image_cache_dir,
-                               image_id) + '*'
+    def _get_cached_images(self, image_id, image_cache_dir):
+        pattern = os.path.join(image_cache_dir, image_id) + '*'
         return glob.glob(pattern)
 
     def _is_resize_needed(self, image_path, requested_size_gb):
@@ -135,3 +139,9 @@ class ImageCache(object):
     def _get_image_size(self, image_path):
         image_info = image_utils.qemu_img_info(image_path)
         return image_info.virtual_size
+
+    def _get_image_cache_dir(self, destination_path):
+        if self._cache_at_destination:
+            return os.path.dirname(destination_path)
+        else:
+            return CONF.imagecache.image_cache_dir
