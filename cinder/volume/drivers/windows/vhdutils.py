@@ -439,3 +439,11 @@ class VHDUtils(object):
         if ret_val:
             raise exception.VolumeBackendAPIException(
                 _("Virtual disk reconnect failed with error: %s") % ret_val)
+
+    def flatten_vhd(self, vhd_path):
+        base_path, ext = os.path.splitext(vhd_path)
+        tmp_path = base_path + '.tmp' + ext
+        self.convert_vhd(vhd_path, tmp_path)
+
+        os.unlink(vhd_path)
+        os.rename(tmp_path, vhd_path)

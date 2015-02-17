@@ -120,12 +120,14 @@ class ImageCacheTestCase(test.TestCase):
 
         fetch_path = self._imagecache._get_fetch_path(
             mock.sentinel.image_id, mock.sentinel.destination_path,
-            mock.sentinel.image_format, mock.sentinel.image_subformat)
+            mock.sentinel.image_format, mock.sentinel.image_subformat,
+            mock.sentinel.image_cache_dir)
 
         if cache_images:
             mock_get_cached_image_path.assert_called_once_with(
                 mock.sentinel.image_id, mock.sentinel.image_format,
-                mock.sentinel.image_subformat)
+                mock.sentinel.image_subformat,
+                mock.sentinel.image_cache_dir)
             expected_path = mock_get_cached_image_path.return_value
         else:
             expected_path = mock.sentinel.destination_path
@@ -143,10 +145,10 @@ class ImageCacheTestCase(test.TestCase):
         fake_image_format = 'vhd'
         fake_image_subformat = 'fixed'
         fake_cache_dir = 'fake_cache_dir'
-        self.flags(image_cache_dir=fake_cache_dir, group='imagecache')
 
         image_path = self._imagecache._get_cached_image_path(
-            fake_image_id, fake_image_format, fake_image_subformat)
+            fake_image_id, fake_image_format, fake_image_subformat,
+            fake_cache_dir)
         expected_file_name = '%s-%s.%s' % (fake_image_id,
                                            fake_image_subformat,
                                            fake_image_format)

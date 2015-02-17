@@ -70,15 +70,24 @@ class TestWindowsDriver(test.TestCase):
         return os.path.join(CONF.windows_iscsi_lun_path,
                             str(volume['name']) + ".vhd")
 
+    def _fake_check_min_windows_version(self, major, minor, build=0):
+        return True
+
     def test_check_for_setup_errors(self):
         drv = self._driver
+        self.flags(use_cow_images=True, group='imagecache')
+
         self.mox.StubOutWithMock(image_utils,
                                  'check_qemu_img_version')
         self.mox.StubOutWithMock(windows_utils.WindowsUtils,
                                  'check_for_setup_error')
+        self.stubs.Set(windows_utils.WindowsUtils,
+                       'check_min_windows_version',
+                       self._fake_check_min_windows_version)
 
         image_utils.check_qemu_img_version(mox.IsA(str))
         windows_utils.WindowsUtils.check_for_setup_error()
+        windows_utils.WindowsUtils.check_min_windows_version(6, 3)
 
         self.mox.ReplayAll()
 
