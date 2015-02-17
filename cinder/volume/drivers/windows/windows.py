@@ -68,6 +68,11 @@ class WindowsDriver(driver.ISCSIDriver):
     def check_for_setup_error(self):
         """Check that the driver is working and can communicate."""
         self.utils.check_for_setup_error()
+        diff_images_supported = self.utils.check_min_windows_version(6,3)
+        if CONF.imagecache.use_cow_images and not diff_images_supported:
+            err_msg = _("Windows Server 2012 R2 or later is required in "
+                        "order to use differencing images as iSCSI disks.")
+            raise exception.VolumeBackendAPIException(err_msg)
 
     def initialize_connection(self, volume, connector):
         """Driver entry point to attach a volume to an instance."""
