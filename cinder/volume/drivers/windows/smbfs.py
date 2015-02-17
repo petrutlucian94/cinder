@@ -13,9 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-
+import json
 import os
-import re
 import sys
 
 from oslo_config import cfg
@@ -41,6 +40,15 @@ CONF.set_default('smbfs_shares_config', r'C:\OpenStack\smbfs_shares.txt')
 CONF.set_default('smbfs_mount_point_base', r'C:\OpenStack\_mnt')
 CONF.set_default('smbfs_default_volume_format', 'vhd')
 
+volume_opts = [
+    cfg.StrOpt('allocation_info_file_path',
+               default=r'c:\OpenStack\allocation_info.info',
+               help=('The path of the automatically generated file containing '
+                     'information about volume disk space allocation.')),
+]
+
+CONF.register_opts(volume_opts)
+
 
 class WindowsSmbfsDriver(smbfs.SmbfsDriver):
     VERSION = VERSION
@@ -59,10 +67,50 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             smbfs_mount_options=opts)
         self.vhdutils = vhdutils.VHDUtils()
         self._imagecache = imagecache.WindowsImageCache()
+        self._alloc_info_file_path = CONF.allocation_info_file_path
 
     def do_setup(self, context):
         self._check_os_platform()
+        self._setup_allocation_data()
         super(WindowsSmbfsDriver, self).do_setup(context)
+
+    def _setup_allocation_data(self):
+        if not os.path.exists(self._alloc_info_file_path):
+            fileutils.ensure_tree(
+                os.path.dirname(self._alloc_info_file_path))
+            self._allocation_data = {}
+            self._update_allocation_data_file()
+        else:
+            with open(self._alloc_info_file_path, 'r') as f:
+                self._allocation_data = json.load(f)
+
+    def _update_allocation_data(self, volume, virtual_size_gb=None):
+        volume_name = volume['name']
+        smbfs_share = volume['provider_location']
+        if smbfs_share:
+            share_hash = self._get_hash_str(smbfs_share)
+        else:
+            return
+
+        share_alloc_data = self._allocation_data.get(share_hash, {})
+        old_virtual_size = share_alloc_data.get(volume_name, 0)
+        total_allocated = share_alloc_data.get('total_allocated', 0)
+
+        if virtual_size_gb:
+            share_alloc_data[volume_name] = virtual_size_gb
+            total_allocated += virtual_size_gb - old_virtual_size
+        elif share_alloc_data.get(volume_name):
+            # The volume is deleted.
+            del share_alloc_data[volume_name]
+            total_allocated -= old_virtual_size
+
+        share_alloc_data['total_allocated'] = total_allocated
+        self._allocation_data[share_hash] = share_alloc_data
+        self._update_allocation_data_file()
+
+    def _update_allocation_data_file(self):
+        with open(self._alloc_info_file_path, 'w') as f:
+            json.dump(self._allocation_data, f)
 
     def _check_os_platform(self):
         if sys.platform != 'win32':
@@ -85,6 +133,11 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             raise exception.InvalidVolume(err_msg)
 
         self.vhdutils.create_dynamic_vhd(volume_path, volume_size_bytes)
+        self._update_allocation_data(volume, volume['size'])
+
+    def delete_volume(self, volume):
+        super(WindowsSmbfsDriver, self).delete_volume(volume)
+        self._update_allocation_data(volume)
 
     def _ensure_share_mounted(self, smbfs_share):
         mnt_options = {}
@@ -103,30 +156,15 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
         """
         total_size, total_available = self._remotefsclient.get_capacity_info(
             smbfs_share)
-        total_allocated = self._get_total_allocated(smbfs_share)
+
+        share_hash = self._get_hash_str(smbfs_share)
+        share_alloc_data = self._allocation_data.get(share_hash, {})
+        total_allocated = share_alloc_data.get('total_allocated', 0) << 30
+
         return_value = [total_size, total_available, total_allocated]
         LOG.info('Smb share %s Total size %s Total allocated %s'
                  % (smbfs_share, total_size, total_allocated))
         return [float(x) for x in return_value]
-
-    def _get_total_allocated(self, smbfs_share):
-        elements = os.listdir(smbfs_share)
-        total_allocated = 0
-        for element in elements:
-            element_path = os.path.join(smbfs_share, element)
-            if not self._remotefsclient.is_symlink(element_path):
-                if "snapshot" in element:
-                    continue
-                if re.search(r'\.vhdx?$', element):
-                    total_allocated += self.vhdutils.get_vhd_size(
-                        element_path)['VirtualSize']
-                    continue
-                if os.path.isdir(element_path):
-                    total_allocated += self._get_total_allocated(element_path)
-                    continue
-            total_allocated += os.path.getsize(element_path)
-
-        return total_allocated
 
     def _img_commit(self, snapshot_path):
         self.vhdutils.merge_vhd(snapshot_path)
@@ -166,6 +204,10 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             backing_file)
         self.vhdutils.create_differencing_vhd(new_snap_path,
                                               backing_file_full_path)
+
+    def _extend_volume(self, volume, size_gb):
+        super(WindowsSmbfsDriver, self)._extend_volume(volume, size_gb)
+        self._update_allocation_data(volume, size_gb)
 
     def _do_extend_volume(self, volume_path, size_gb):
         self.vhdutils.resize_vhd(volume_path, size_gb * units.Gi)

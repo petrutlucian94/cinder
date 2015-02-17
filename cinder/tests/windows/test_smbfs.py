@@ -12,7 +12,9 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import hashlib
 import importlib
+import json
 import os
 import sys
 
@@ -20,24 +22,25 @@ import mock
 
 from cinder import exception
 from cinder.image import image_utils
+from cinder.openstack.common import fileutils
 from cinder import test
 
 
 class WindowsSmbFsTestCase(test.TestCase):
 
     _FAKE_SHARE = '//1.2.3.4/share1'
+    _FAKE_SHARE_HASH = hashlib.md5(_FAKE_SHARE).hexdigest()
     _FAKE_MNT_BASE = 'c:\openstack\mnt'
-    _FAKE_MNT_POINT = os.path.join(_FAKE_MNT_BASE, 'fake_hash')
-    _FAKE_VOLUME_NAME = 'volume-4f711859-4928-4cb7-801a-a50c37ceaccc'
+    _FAKE_MNT_POINT = os.path.join(_FAKE_MNT_BASE, _FAKE_SHARE_HASH)
+    _FAKE_VOLUME_NAME = 'e8d76af4-cbb9-4b70-8e9e-5a133f1a1a66'
     _FAKE_SNAPSHOT_NAME = _FAKE_VOLUME_NAME + '-snapshot.vhdx'
-    _FAKE_VOLUME_PATH = os.path.join(_FAKE_MNT_POINT,
-                                     _FAKE_VOLUME_NAME)
     _FAKE_SNAPSHOT_PATH = os.path.join(_FAKE_MNT_POINT,
                                        _FAKE_SNAPSHOT_NAME)
     _FAKE_TOTAL_SIZE = '2048'
     _FAKE_TOTAL_AVAILABLE = '1024'
     _FAKE_TOTAL_ALLOCATED = 1024
     _FAKE_VOLUME = {'id': 'e8d76af4-cbb9-4b70-8e9e-5a133f1a1a66',
+                    'name': _FAKE_VOLUME_NAME,
                     'size': 1,
                     'provider_location': _FAKE_SHARE}
     _FAKE_SNAPSHOT = {'id': '35a23942-7625-4683-ad84-144b76e87a80',
@@ -46,8 +49,8 @@ class WindowsSmbFsTestCase(test.TestCase):
     _FAKE_SHARE_OPTS = '-o username=Administrator,password=12345'
     _FAKE_VOLUME_PATH = os.path.join(_FAKE_MNT_POINT,
                                      _FAKE_VOLUME_NAME + '.vhdx')
-    _FAKE_LISTDIR = [_FAKE_VOLUME_NAME + '.vhd',
-                     _FAKE_VOLUME_NAME + '.vhdx', 'fake_folder']
+    _FAKE_ALLOCATION_DATA_DIR = 'fake_allocation_data_dir'
+    _FAKE_ALLOCATION_DATA_FILE_NAME = 'fake_allocation_data.info'
 
     def setUp(self):
         super(WindowsSmbFsTestCase, self).setUp()
@@ -59,7 +62,6 @@ class WindowsSmbFsTestCase(test.TestCase):
                         ctypes=self._mock_wmi).start()
 
         self._platform_patcher.start()
-        # self._wmi_patcher.start()
         self.addCleanup(mock.patch.stopall)
 
         smbfs = importlib.import_module(
@@ -72,12 +74,94 @@ class WindowsSmbFsTestCase(test.TestCase):
             return_value=self._FAKE_VOLUME_PATH)
         self._smbfs_driver.vhdutils = mock.Mock()
         self._smbfs_driver._check_os_platform = mock.Mock()
+        self._smbfs_driver._alloc_info_file_path = os.path.join(
+            self._FAKE_ALLOCATION_DATA_DIR,
+            self._FAKE_ALLOCATION_DATA_FILE_NAME)
+
+    def _get_fake_allocation_data(self):
+        return {self._FAKE_SHARE_HASH: {
+                'total_allocated': self._FAKE_TOTAL_ALLOCATED}}
+
+    @mock.patch('__builtin__.open')
+    @mock.patch('os.path.exists')
+    @mock.patch.object(fileutils, 'ensure_tree')
+    @mock.patch.object(json, 'load')
+    def _test_setup_allocation_data(self, mock_json_load, mock_ensure_tree,
+                                    mock_exists, mock_open,
+                                    allocation_data_exists=False):
+        mock_exists.return_value = allocation_data_exists
+        self._smbfs_driver._update_allocation_data_file = mock.Mock()
+
+        self._smbfs_driver._setup_allocation_data()
+
+        if allocation_data_exists:
+            fd = mock_open.return_value.__enter__.return_value
+            mock_json_load.assert_called_once_with(fd)
+            self.assertEqual(self._smbfs_driver._allocation_data,
+                             mock_json_load.return_value)
+        else:
+            mock_ensure_tree.assert_called_once_with(
+                self._FAKE_ALLOCATION_DATA_DIR)
+            update_func = self._smbfs_driver._update_allocation_data_file
+            update_func.assert_called_once_with()
+
+    def test_setup_allocation_data_file_unexisting(self):
+        self._test_setup_allocation_data()
+
+    def test_setup_allocation_data_file_existing(self):
+        self._test_setup_allocation_data(allocation_data_exists=True)
+
+    def _test_update_allocation_data(self, virtual_size_gb=None,
+                                     volume_exists=True):
+        self._smbfs_driver._update_allocation_data_file = mock.Mock()
+        update_func = self._smbfs_driver._update_allocation_data_file
+
+        fake_alloc_data = self._get_fake_allocation_data()
+        if volume_exists:
+            fake_alloc_data[self._FAKE_SHARE_HASH][
+                self._FAKE_VOLUME_NAME] = self._FAKE_VOLUME['size']
+
+        self._smbfs_driver._allocation_data = fake_alloc_data
+
+        self._smbfs_driver._update_allocation_data(self._FAKE_VOLUME,
+                                                   virtual_size_gb)
+
+        vol_allocated_size = fake_alloc_data[self._FAKE_SHARE_HASH].get(
+            self._FAKE_VOLUME_NAME, None)
+        if not virtual_size_gb:
+            expected_total_allocated = (self._FAKE_TOTAL_ALLOCATED -
+                                        self._FAKE_VOLUME['size'])
+
+            self.assertIsNone(vol_allocated_size)
+        else:
+            expected_total_allocated = (self._FAKE_TOTAL_ALLOCATED +
+                                        virtual_size_gb -
+                                        self._FAKE_VOLUME['size'])
+            self.assertEqual(virtual_size_gb, vol_allocated_size)
+
+        update_func.assert_called_once_with()
+
+        self.assertEqual(
+            expected_total_allocated,
+            fake_alloc_data[self._FAKE_SHARE_HASH]['total_allocated'])
+
+    def test_update_allocation_data_volume_deleted(self):
+        self._test_update_allocation_data()
+
+    def test_update_allocation_data_volume_extended(self):
+        self._test_update_allocation_data(
+            virtual_size_gb=self._FAKE_VOLUME['size'] + 1)
+
+    def test_update_allocation_data_volume_created(self):
+        self._test_update_allocation_data(
+            virtual_size_gb=self._FAKE_VOLUME['size'])
 
     def _test_create_volume(self, volume_exists=False, volume_format='vhdx'):
         self._smbfs_driver.create_dynamic_vhd = mock.MagicMock()
         fake_create = self._smbfs_driver.vhdutils.create_dynamic_vhd
         self._smbfs_driver.get_volume_format = mock.Mock(
             return_value=volume_format)
+        self._smbfs_driver._update_allocation_data = mock.Mock()
 
         with mock.patch('os.path.exists', new=lambda x: volume_exists):
             if volume_exists or volume_format not in ('vhd', 'vhdx'):
@@ -89,6 +173,9 @@ class WindowsSmbFsTestCase(test.TestCase):
                 self._smbfs_driver._do_create_volume(self._FAKE_VOLUME)
                 fake_create.assert_called_once_with(
                     fake_vol_path, self._FAKE_VOLUME['size'] << 30)
+                update_func = self._smbfs_driver._update_allocation_data
+                update_func.assert_called_once_with(self._FAKE_VOLUME,
+                                                    self._FAKE_VOLUME['size'])
 
     def test_create_volume(self):
         self._test_create_volume()
@@ -102,32 +189,13 @@ class WindowsSmbFsTestCase(test.TestCase):
     def test_get_capacity_info(self):
         self._smbfs_driver._remotefsclient.get_capacity_info = mock.Mock(
             return_value=(self._FAKE_TOTAL_SIZE, self._FAKE_TOTAL_AVAILABLE))
-        self._smbfs_driver._get_total_allocated = mock.Mock(
-            return_value=self._FAKE_TOTAL_ALLOCATED)
+        self._smbfs_driver._allocation_data = self._get_fake_allocation_data()
 
         ret_val = self._smbfs_driver._get_capacity_info(self._FAKE_SHARE)
         expected_ret_val = [int(x) for x in [self._FAKE_TOTAL_SIZE,
                             self._FAKE_TOTAL_AVAILABLE,
-                            self._FAKE_TOTAL_ALLOCATED]]
+                            self._FAKE_TOTAL_ALLOCATED << 30]]
         self.assertEqual(ret_val, expected_ret_val)
-
-    def test_get_total_allocated(self):
-        fake_listdir = mock.Mock(side_effect=[self._FAKE_LISTDIR,
-                                              self._FAKE_LISTDIR[:-1]])
-        fake_folder_path = os.path.join(self._FAKE_SHARE, 'fake_folder')
-        fake_isdir = lambda x: x == fake_folder_path
-        self._smbfs_driver._remotefsclient.is_symlink = mock.Mock(
-            return_value=False)
-        fake_getsize = mock.Mock(return_value=self._FAKE_VOLUME['size'])
-        self._smbfs_driver.vhdutils.get_vhd_size = mock.Mock(
-            return_value={'VirtualSize': 1})
-
-        with mock.patch.multiple('os.path', isdir=fake_isdir,
-                                 getsize=fake_getsize):
-            with mock.patch('os.listdir', fake_listdir):
-                ret_val = self._smbfs_driver._get_total_allocated(
-                    self._FAKE_SHARE)
-                self.assertEqual(ret_val, 4)
 
     def _test_get_img_info(self, backing_file=None):
         self._smbfs_driver.vhdutils.get_vhd_parent_path.return_value = (
