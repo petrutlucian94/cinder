@@ -30,8 +30,6 @@ class WindowsSmbFsTestCase(test.TestCase):
     _FAKE_MNT_POINT = os.path.join(_FAKE_MNT_BASE, 'fake_hash')
     _FAKE_VOLUME_NAME = 'volume-4f711859-4928-4cb7-801a-a50c37ceaccc'
     _FAKE_SNAPSHOT_NAME = _FAKE_VOLUME_NAME + '-snapshot.vhdx'
-    _FAKE_VOLUME_PATH = os.path.join(_FAKE_MNT_POINT,
-                                     _FAKE_VOLUME_NAME)
     _FAKE_SNAPSHOT_PATH = os.path.join(_FAKE_MNT_POINT,
                                        _FAKE_SNAPSHOT_NAME)
     _FAKE_TOTAL_SIZE = '2048'
@@ -46,8 +44,6 @@ class WindowsSmbFsTestCase(test.TestCase):
     _FAKE_SHARE_OPTS = '-o username=Administrator,password=12345'
     _FAKE_VOLUME_PATH = os.path.join(_FAKE_MNT_POINT,
                                      _FAKE_VOLUME_NAME + '.vhdx')
-    _FAKE_LISTDIR = [_FAKE_VOLUME_NAME + '.vhd',
-                     _FAKE_VOLUME_NAME + '.vhdx', 'fake_folder']
 
     def setUp(self):
         super(WindowsSmbFsTestCase, self).setUp()
