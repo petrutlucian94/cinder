@@ -15,7 +15,6 @@
 
 
 import os
-import re
 import sys
 
 from oslo_config import cfg
@@ -38,6 +37,8 @@ LOG = logging.getLogger(__name__)
 
 CONF = cfg.CONF
 CONF.set_default('smbfs_shares_config', r'C:\OpenStack\smbfs_shares.txt')
+CONF.set_default('smbfs_allocation_info_file_path',
+                 r'C:\OpenStack\allocation_data.txt')
 CONF.set_default('smbfs_mount_point_base', r'C:\OpenStack\_mnt')
 CONF.set_default('smbfs_default_volume_format', 'vhd')
 
@@ -107,25 +108,6 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
         LOG.info('Smb share %s Total size %s Total allocated %s'
                  % (smbfs_share, total_size, total_allocated))
         return [float(x) for x in return_value]
-
-    def _get_total_allocated(self, smbfs_share):
-        elements = os.listdir(smbfs_share)
-        total_allocated = 0
-        for element in elements:
-            element_path = os.path.join(smbfs_share, element)
-            if not self._remotefsclient.is_symlink(element_path):
-                if "snapshot" in element:
-                    continue
-                if re.search(r'\.vhdx?$', element):
-                    total_allocated += self.vhdutils.get_vhd_size(
-                        element_path)['VirtualSize']
-                    continue
-                if os.path.isdir(element_path):
-                    total_allocated += self._get_total_allocated(element_path)
-                    continue
-            total_allocated += os.path.getsize(element_path)
-
-        return total_allocated
 
     def _img_commit(self, snapshot_path):
         self.vhdutils.merge_vhd(snapshot_path)
