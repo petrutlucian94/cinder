@@ -133,7 +133,7 @@ class TestConvertImage(test.TestCase):
 
             self.assertIsNone(output)
             mock_exec.assert_called_once_with('cgcmd', 'qemu-img', 'convert',
-                                              '-t', 'none', '-O', out_format,
+                                              '-O', out_format, '-t', 'none',
                                               source, dest, run_as_root=True)
 
         mock_exec.reset_mock()
@@ -152,18 +152,22 @@ class TestConvertImage(test.TestCase):
     @mock.patch('cinder.image.image_utils.os.stat')
     @mock.patch('cinder.utils.execute')
     @mock.patch('cinder.utils.is_blk_device', return_value=False)
-    def test_defaults_not_block_dev(self, mock_isblk, mock_exec,
-                                    mock_stat, mock_odirect):
+    def test_kwargs_not_block_dev(self, mock_isblk, mock_exec,
+                                  mock_stat, mock_odirect):
         source = mock.sentinel.source
         dest = mock.sentinel.dest
         out_format = mock.sentinel.out_format
         mock_stat.return_value.st_size = 1048576
+        out_subformat = 'fake_subformat'
 
-        output = image_utils.convert_image(source, dest, out_format)
+        output = image_utils.convert_image(source, dest, out_format,
+                                           out_subformat=out_subformat)
 
         self.assertIsNone(output)
         mock_exec.assert_called_once_with('qemu-img', 'convert', '-O',
-                                          out_format, source, dest,
+                                          out_format, '-o',
+                                          'subformat=%s' % out_subformat,
+                                          source, dest,
                                           run_as_root=True)
 
 
@@ -639,6 +643,7 @@ class TestFetchToVolumeFormat(test.TestCase):
         self.assertFalse(mock_repl_xen.called)
         self.assertFalse(mock_copy.called)
         mock_convert.assert_called_once_with(tmp, dest, volume_format,
+                                             out_subformat=None,
                                              run_as_root=True)
 
     @mock.patch('cinder.image.image_utils.convert_image')
@@ -658,6 +663,7 @@ class TestFetchToVolumeFormat(test.TestCase):
         image_id = mock.sentinel.image_id
         dest = mock.sentinel.dest
         volume_format = mock.sentinel.volume_format
+        volume_subformat = mock.sentinel.volume_subformat
         blocksize = mock.sentinel.blocksize
         user_id = mock.sentinel.user_id
         project_id = mock.sentinel.project_id
@@ -673,6 +679,7 @@ class TestFetchToVolumeFormat(test.TestCase):
         output = image_utils.fetch_to_volume_format(
             ctxt, image_service, image_id, dest, volume_format, blocksize,
             user_id=user_id, project_id=project_id, size=size,
+            volume_subformat=volume_subformat,
             run_as_root=run_as_root)
 
         self.assertIsNone(output)
@@ -687,6 +694,7 @@ class TestFetchToVolumeFormat(test.TestCase):
         self.assertFalse(mock_repl_xen.called)
         self.assertFalse(mock_copy.called)
         mock_convert.assert_called_once_with(tmp, dest, volume_format,
+                                             out_subformat=volume_subformat,
                                              run_as_root=run_as_root)
 
     @mock.patch('cinder.image.image_utils.convert_image')
@@ -1019,6 +1027,7 @@ class TestFetchToVolumeFormat(test.TestCase):
         self.assertFalse(mock_repl_xen.called)
         self.assertFalse(mock_copy.called)
         mock_convert.assert_called_once_with(tmp, dest, volume_format,
+                                             out_subformat=None,
                                              run_as_root=run_as_root)
 
     def test_format_mismatch(self):
@@ -1076,6 +1085,7 @@ class TestFetchToVolumeFormat(test.TestCase):
         mock_repl_xen.assert_called_once_with(tmp)
         self.assertFalse(mock_copy.called)
         mock_convert.assert_called_once_with(tmp, dest, volume_format,
+                                             out_subformat=None,
                                              run_as_root=run_as_root)
 
 
