@@ -261,6 +261,7 @@ class WindowsSmbFsTestCase(test.TestCase):
             return_value=fake_img_info)
         drv.local_path = mock.Mock(
             return_value=mock.sentinel.new_volume_path)
+        drv._is_windows_image_format = mock.Mock(return_value=True)
 
         volume = self._simple_volume()
         drv._copy_volume_from_snapshot(snapshot,
