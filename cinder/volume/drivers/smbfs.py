@@ -193,6 +193,8 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         self._ensure_shares_mounted()
         self._setup_allocation_data()
 
+        super(SmbfsDriver, self).do_setup(context)
+
     def _setup_allocation_data(self):
         if not os.path.exists(self._alloc_info_file_path):
             fileutils.ensure_tree(
@@ -451,15 +453,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
                       smbfs_share)
             return False
         return True
-
-    def _create_snapshot_online(self, snapshot, backing_filename,
-                                new_snap_path):
-        msg = _("This driver does not support snapshotting in-use volumes.")
-        raise exception.SmbfsException(msg)
-
-    def _delete_snapshot_online(self, context, snapshot, info):
-        msg = _("This driver does not support deleting in-use snapshots.")
-        raise exception.SmbfsException(msg)
 
     def _do_create_snapshot(self, snapshot, backing_filename, new_snap_path):
         self._check_snapshot_support(snapshot)
