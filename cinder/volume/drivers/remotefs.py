@@ -316,10 +316,11 @@ class RemoteFSDriver(driver.LocalVD, driver.TransferVD, driver.BaseVD):
         """
         pass
 
-    def _delete(self, path):
+    def _delete(self, path, force_run_as_root=False):
         # Note(lpetrut): this method is needed in order to provide
         # interoperability with Windows as it will be overridden.
-        self._execute('rm', '-f', path, run_as_root=self._execute_as_root)
+        run_as_root = self._execute_as_root or force_run_as_root
+        self._execute('rm', '-f', path, run_as_root=run_as_root)
 
     def _create_sparsed_file(self, path, size):
         """Creates a sparse file of a given size in GiB."""
@@ -691,13 +692,16 @@ class RemoteFSSnapDriver(RemoteFSDriver, driver.SnapshotVD):
         if info.image:
             info.image = os.path.basename(info.image)
         if info.backing_file:
+            # Backslashes are replaced so that this check will work with
+            # Windows paths as well.
             backing_file_template = \
                 "(%(basedir)s/[0-9a-f]+/)?%" \
                 "(volname)s(.(tmp-snap-)?[0-9a-f-]+)?$" % {
-                    'basedir': basedir,
+                    'basedir': basedir.replace('\\', '/'),
                     'volname': volume_name
                 }
-            if not re.match(backing_file_template, info.backing_file):
+            if not re.match(backing_file_template,
+                            info.backing_file.replace('\\', '/')):
                 msg = _("File %(path)s has invalid backing file "
                         "%(bfile)s, aborting.") % {'path': path,
                                                    'bfile': info.backing_file}
@@ -1408,7 +1412,7 @@ class RemoteFSSnapDriver(RemoteFSDriver, driver.SnapshotVD):
         # Delete stale file
         path_to_delete = os.path.join(
             self._local_volume_dir(snapshot['volume']), file_to_delete)
-        self._execute('rm', '-f', path_to_delete, run_as_root=True)
+        self._delete(path_to_delete, force_run_as_root=True)
 
     @locked_volume_id_operation
     def create_snapshot(self, snapshot):

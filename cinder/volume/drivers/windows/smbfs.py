@@ -13,7 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-
+import decorator
+import inspect
 import os
 import sys
 
@@ -41,6 +42,32 @@ CONF.set_default('smbfs_allocation_info_file_path',
                  r'C:\OpenStack\allocation_data.txt')
 CONF.set_default('smbfs_mount_point_base', r'C:\OpenStack\_mnt')
 CONF.set_default('smbfs_default_volume_format', 'vhd')
+
+
+def use_super_class_for_non_windows_image(determinant):
+    # This module implements Windows specific disk image operations. While
+    # Win32 API is used for VHD/X images, we can use the super class methods,
+    # which rely on qemu-img, for other image formats such as raw, qcow2, etc.
+    #
+    # This decorator must be used with precaution, making sure that the
+    # decorated method and the super class method do not attempt to use the
+    # same lock, which would lead to a dead-lock.
+    @decorator.decorator
+    def wrapper(func, inst, *args, **kwargs):
+        call_args = inspect.getcallargs(func, inst, *args, **kwargs)
+        if determinant == 'volume':
+            volume = call_args.get(determinant)
+            image_path = inst.local_path(volume)
+        else:
+            image_path = call_args.get(determinant)
+
+        if inst._is_windows_image_format(image_path):
+            return func(inst, *args, **kwargs)
+        else:
+            super_method = getattr(super(WindowsSmbfsDriver, inst),
+                                   func.func_name)
+            return super_method(*args, **kwargs)
+    return wrapper
 
 
 class WindowsSmbfsDriver(smbfs.SmbfsDriver):
@@ -80,12 +107,14 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             err_msg = _('File already exists at: %s') % volume_path
             raise exception.InvalidVolume(err_msg)
 
-        if volume_format not in (self._DISK_FORMAT_VHD,
-                                 self._DISK_FORMAT_VHDX):
+        if volume_format in (self._DISK_FORMAT_VHD,
+                             self._DISK_FORMAT_VHDX):
+            self.vhdutils.create_dynamic_vhd(volume_path, volume_size_bytes)
+        elif volume_format in (self._DISK_FORMAT_RAW, self._DISK_FORMAT_QCOW2):
+            self._qemu_img_create(volume_path, volume['size'], volume_format)
+        else:
             err_msg = _("Unsupported volume format: %s ") % volume_format
             raise exception.InvalidVolume(err_msg)
-
-        self.vhdutils.create_dynamic_vhd(volume_path, volume_size_bytes)
 
     def _ensure_share_mounted(self, smbfs_share):
         mnt_options = {}
@@ -94,7 +123,7 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             mnt_options = self.parse_options(mnt_flags)[1]
         self._remotefsclient.mount(smbfs_share, mnt_options)
 
-    def _delete(self, path):
+    def _delete(self, path, force_run_as_root=False):
         fileutils.delete_if_exists(path)
 
     def _get_capacity_info(self, smbfs_share):
@@ -112,16 +141,19 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
                   'allocated': total_allocated})
         return [float(x) for x in return_value]
 
+    @use_super_class_for_non_windows_image('snapshot_path')
     def _img_commit(self, snapshot_path):
         self.vhdutils.merge_vhd(snapshot_path)
         self._delete(snapshot_path)
 
+    @use_super_class_for_non_windows_image('image')
     def _rebase_img(self, image, backing_file, volume_format):
         # Relative path names are not supported in this case.
         image_dir = os.path.dirname(image)
         backing_file_path = os.path.join(image_dir, backing_file)
         self.vhdutils.reconnect_parent(image, backing_file_path)
 
+    @use_super_class_for_non_windows_image('path')
     def _qemu_img_info(self, path, volume_name=None):
         # This code expects to deal only with relative filenames.
         # As this method is needed by the upper class and qemu-img does
@@ -144,6 +176,7 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
         return ImageInfo(os.path.basename(path),
                          backing_file_name)
 
+    @use_super_class_for_non_windows_image('backing_file')
     def _do_create_snapshot(self, snapshot, backing_file, new_snap_path):
         backing_file_full_path = os.path.join(
             self._local_volume_dir(snapshot['volume']),
@@ -151,11 +184,18 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
         self.vhdutils.create_differencing_vhd(new_snap_path,
                                               backing_file_full_path)
 
+    @use_super_class_for_non_windows_image('volume_path')
     def _do_extend_volume(self, volume_path, size_gb, volume_name=None):
         self.vhdutils.resize_vhd(volume_path, size_gb * units.Gi)
 
-    @remotefs_drv.locked_volume_id_operation
+    @use_super_class_for_non_windows_image('volume')
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
+        return self._copy_volume_to_image_with_lock(context, volume,
+                                                    image_service, image_meta)
+
+    @remotefs_drv.locked_volume_id_operation
+    def _copy_volume_to_image_with_lock(self, context, volume, image_service,
+                                        image_meta):
         """Copy the volume to the specified image."""
 
         # If snapshots exist, flatten to a temporary image, and upload it
@@ -191,6 +231,7 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             if temp_path:
                 self._delete(temp_path)
 
+    @use_super_class_for_non_windows_image('volume')
     def copy_image_to_volume(self, context, volume, image_service, image_id):
         """Fetch the image from image_service and write it to the volume."""
         volume_path = self.local_path(volume)
@@ -204,6 +245,7 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
 
         self._extend_vhd_if_needed(self.local_path(volume), volume['size'])
 
+    @use_super_class_for_non_windows_image('volume')
     def _copy_volume_from_snapshot(self, snapshot, volume, volume_size):
         """Copy data from snapshot to destination volume."""
 
@@ -240,3 +282,20 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             vhd_path, new_size_bytes, old_size_bytes)
         if is_resize_needed:
             self.vhdutils.resize_vhd(vhd_path, new_size_bytes)
+
+    def _qemu_img_create(self, path, size, fmt):
+        self._execute('qemu-img', 'create', '-f', fmt,
+                      path, str(size) + 'G')
+
+    def _check_snapshot_support(self, snapshot):
+        pass
+
+    def _set_rw_permissions(self, path):
+        pass
+
+    def _set_rw_permissions_for_all(self, path):
+        pass
+
+    def _is_windows_image_format(self, image_path):
+        file_format = os.path.splitext(image_path)[1][1:].lower()
+        return file_format in (self._DISK_FORMAT_VHD, self._DISK_FORMAT_VHDX)
