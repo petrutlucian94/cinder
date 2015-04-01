@@ -77,6 +77,44 @@ volume_opts = [
 CONF = cfg.CONF
 CONF.register_opts(volume_opts)
 
+lock_tag = 'smbfs'
+
+
+def locked_volume_id_operation(f, external=False):
+    """Lock decorator for volume operations.
+       Takes a named lock prior to executing the operation. The lock is named
+       with the id of the volume. This lock can then be used
+       by other operations to avoid operation conflicts on shared volumes.
+       May be applied to methods of signature:
+          method(<self>, volume, *, **)
+    """
+
+    def lvo_inner1(inst, volume, *args, **kwargs):
+        @utils.synchronized('%s-%s' % (lock_tag, volume['id']),
+                            external=external)
+        def lvo_inner2(*_args, **_kwargs):
+            return f(*_args, **_kwargs)
+        return lvo_inner2(inst, volume, *args, **kwargs)
+    return lvo_inner1
+
+
+def locked_volume_id_snapshot_operation(f, external=False):
+    """Lock decorator for volume operations that use snapshot objects.
+       Takes a named lock prior to executing the operation. The lock is named
+       with the id of the volume. This lock can then be used
+       by other operations to avoid operation conflicts on shared volumes.
+       May be applied to methods of signature:
+          method(<self>, snapshot, *, **)
+    """
+
+    def lso_inner1(inst, snapshot, *args, **kwargs):
+        @utils.synchronized('%s-%s' % (lock_tag, snapshot['volume']['id']),
+                            external=external)
+        def lso_inner2(*_args, **_kwargs):
+            return f(*_args, **_kwargs)
+        return lso_inner2(inst, snapshot, *args, **kwargs)
+    return lso_inner1
+
 
 def update_allocation_data(delete=False):
     def wrapper(func):
@@ -135,6 +173,7 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         return super(SmbfsDriver, self)._qemu_img_info_base(
             path, volume_name, self.configuration.smbfs_mount_point_base)
 
+    @locked_volume_id_operation
     def initialize_connection(self, volume, connector):
         """Allow connection to connector and return connection info.
 
@@ -297,8 +336,8 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
 
         return volume_format
 
-    @utils.synchronized('smbfs', external=False)
     @update_allocation_data(delete=True)
+    @locked_volume_id_operation
     def delete_volume(self, volume):
         """Deletes a logical volume."""
         if not volume['provider_location']:
@@ -468,7 +507,7 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
             return False
         return True
 
-    @utils.synchronized('smbfs', external=False)
+    @locked_volume_id_snapshot_operation
     def create_snapshot(self, snapshot):
         """Apply locking to the create snapshot operation."""
 
@@ -487,13 +526,13 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
                         "format: %s") % volume_format
             raise exception.InvalidVolume(err_msg)
 
-    @utils.synchronized('smbfs', external=False)
+    @locked_volume_id_snapshot_operation
     def delete_snapshot(self, snapshot):
         """Apply locking to the delete snapshot operation."""
 
         return self._delete_snapshot(snapshot)
 
-    @utils.synchronized('smbfs', external=False)
+    @locked_volume_id_operation
     @update_allocation_data()
     def extend_volume(self, volume, size_gb):
         LOG.info(_LI('Extending volume %s.'), volume['id'])
@@ -546,11 +585,17 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
                                               'extend volume %s to %sG.'
                                               % (volume['id'], size_gb))
 
-    @utils.synchronized('smbfs', external=False)
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
-        self._copy_volume_to_image(context, volume, image_service, image_meta)
+        return self._copy_volume_to_image_with_lock(
+            volume, context, image_service, image_meta)
 
-    @utils.synchronized('smbfs', external=False)
+    @locked_volume_id_operation
+    def _copy_volume_to_image_with_lock(self, volume, context,
+                                        image_service, image_meta):
+        return self._copy_volume_to_image(
+            context, volume, image_service, image_meta)
+
+    @locked_volume_id_operation
     @update_allocation_data()
     def create_volume_from_snapshot(self, volume, snapshot):
         self._create_volume_from_snapshot(volume, snapshot)
@@ -622,7 +667,7 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
                 reason=(_("Expected volume size was %d") % volume['size'])
                 + (_(" but size is now %d.") % virt_size))
 
-    @utils.synchronized('smbfs', external=False)
+    @locked_volume_id_operation
     @update_allocation_data()
     def create_cloned_volume(self, volume, src_vref):
         """Creates a clone of the specified volume."""
