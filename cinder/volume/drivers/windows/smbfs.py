@@ -183,9 +183,14 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
     def _do_extend_volume(self, volume_path, size_gb, volume_name=None):
         self.vhdutils.resize_vhd(volume_path, size_gb * units.Gi)
 
-    @utils.synchronized('smbfs', external=False)
     @use_super_class_for_non_windows_image('volume')
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
+        return self._copy_volume_to_image_with_lock_win(
+            volume, context, image_service, image_meta)
+
+    @smbfs.locked_volume_id_operation
+    def _copy_volume_to_image_with_lock_win(self, volume, context,
+                                            image_service, image_meta):
         """Copy the volume to the specified image."""
 
         # If snapshots exist, flatten to a temporary image, and upload it
