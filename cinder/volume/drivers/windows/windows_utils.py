@@ -22,10 +22,12 @@ import sys
 
 from oslo_config import cfg
 from oslo_log import log as logging
+from oslo_utils import units
 
 from cinder import exception
 from cinder.i18n import _, _LI
 from cinder.volume.drivers.windows import constants
+from cinder.volume.drivers.windows import vhdutils
 
 # Check needed for unit testing on Unix
 if sys.platform == 'win32':
@@ -45,6 +47,7 @@ class WindowsUtils(object):
         # Set the flags
         self._conn_wmi = wmi.WMI(moniker='//./root/wmi')
         self._conn_cimv2 = wmi.WMI(moniker='//./root/cimv2')
+        self._vhdutils = vhdutils.VHDUtils()
 
     def check_for_setup_error(self):
         """Check that the driver is working and can communicate.
@@ -371,7 +374,7 @@ class WindowsUtils(object):
             LOG.error(err_msg)
             raise exception.VolumeBackendAPIException(data=err_msg)
 
-    def is_resize_needed(self, vhd_path, new_size, old_size):
+    def _is_resize_needed(self, vhd_path, new_size, old_size):
         if new_size > old_size:
             return True
         elif old_size > new_size:
@@ -384,6 +387,17 @@ class WindowsUtils(object):
                         'new_size': new_size})
             raise exception.VolumeBackendAPIException(data=err_msg)
         return False
+
+    def extend_vhd_if_needed(self, vhd_path, new_size_gb):
+        old_size_bytes = self._vhdutils.get_vhd_size(vhd_path)['VirtualSize']
+        new_size_bytes = new_size_gb * units.Gi
+
+        # This also ensures we're not attempting to shrink the image.
+        is_resize_needed = self._is_resize_needed(vhd_path,
+                                                  new_size_bytes,
+                                                  old_size_bytes)
+        if is_resize_needed:
+            self._vhdutils.resize_vhd(vhd_path, new_size_bytes)
 
     def extend(self, vol_name, additional_size):
         """Extend an existing volume."""

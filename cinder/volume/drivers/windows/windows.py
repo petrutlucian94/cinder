@@ -219,7 +219,6 @@ class WindowsDriver(driver.ISCSIDriver):
         """Creates a clone of the specified volume."""
         vol_name = volume['name']
         vol_size = volume['size']
-        src_vol_size = src_vref['size']
 
         new_vhd_path = self.local_path(volume)
         src_vhd_path = self.local_path(src_vref)
@@ -227,8 +226,7 @@ class WindowsDriver(driver.ISCSIDriver):
         self.utils.copy_vhd_disk(src_vhd_path,
                                  new_vhd_path)
 
-        if self.utils.is_resize_needed(new_vhd_path, vol_size, src_vol_size):
-            self.vhdutils.resize_vhd(new_vhd_path, vol_size << 30)
+        self.utils.extend_vhd_if_needed(new_vhd_path, vol_size)
 
         self.utils.import_wt_disk(new_vhd_path, vol_name)
 
