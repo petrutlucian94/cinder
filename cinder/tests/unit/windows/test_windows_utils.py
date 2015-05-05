@@ -28,6 +28,7 @@ class WindowsUtilsTestCase(test.TestCase):
         self.wutils = windows_utils.WindowsUtils()
         self.wutils._conn_wmi = mock.Mock()
         self.wutils._conn_cimv2 = mock.MagicMock()
+        self.wutils._vhdutils = mock.MagicMock()
 
     def _test_copy_vhd_disk(self, source_exists=True, copy_failed=False):
         fake_data_file_object = mock.MagicMock()
@@ -76,19 +77,19 @@ class WindowsUtilsTestCase(test.TestCase):
             Description=mock.sentinel.vol_name)
 
     def test_check_if_resize_is_needed_bigger_requested_size(self):
-        ret_val = self.wutils.is_resize_needed(
+        ret_val = self.wutils._is_resize_needed(
             mock.sentinel.vhd_path, 1, 0)
         self.assertTrue(ret_val)
 
     def test_check_if_resize_is_needed_equal_requested_size(self):
-        ret_val = self.wutils.is_resize_needed(
+        ret_val = self.wutils._is_resize_needed(
             mock.sentinel.vhd_path, 1, 1)
         self.assertFalse(ret_val)
 
     def test_check_if_resize_is_needed_smaller_requested_size(self):
         self.assertRaises(
             exception.VolumeBackendAPIException,
-            self.wutils.is_resize_needed,
+            self.wutils._is_resize_needed,
             mock.sentinel.vhd_path, 1, 2)
 
     @mock.patch.object(windows_utils.WindowsUtils, '_wmi_obj_set_attr')
@@ -136,3 +137,41 @@ class WindowsUtilsTestCase(test.TestCase):
 
         wmi_property_method.assert_called_once_with(mock.sentinel.key)
         wmi_property.set.assert_called_once_with(mock.sentinel.value)
+
+    def _test_extend_vhd_if_needed(self, virtual_size_gb, requested_size_gb):
+        mock_vhdutils = self.wutils._vhdutils
+        virtual_size_bytes = virtual_size_gb << 30
+        requested_size_bytes = requested_size_gb << 30
+
+        virtual_size_dict = {'VirtualSize': virtual_size_bytes}
+        mock_vhdutils.get_vhd_size = mock.Mock(return_value=virtual_size_dict)
+
+        if virtual_size_gb > requested_size_gb:
+            self.assertRaises(exception.VolumeBackendAPIException,
+                              self.wutils.extend_vhd_if_needed,
+                              mock.sentinel.vhd_path,
+                              requested_size_gb)
+        else:
+            self.wutils.extend_vhd_if_needed(mock.sentinel.vhd_path,
+                                             requested_size_gb)
+
+            if virtual_size_gb < requested_size_gb:
+                mock_vhdutils.resize_vhd.assert_called_once_with(
+                    mock.sentinel.vhd_path, requested_size_bytes)
+            else:
+                self.assertFalse(mock_vhdutils.resize_vhd.called)
+
+        mock_vhdutils.get_vhd_size.assert_called_once_with(
+            mock.sentinel.vhd_path)
+
+    def test_extend_vhd_if_needed_bigger_size(self):
+        self._test_extend_vhd_if_needed(virtual_size_gb=1,
+                                        requested_size_gb=2)
+
+    def test_extend_vhd_if_needed_equal_size(self):
+        self._test_extend_vhd_if_needed(virtual_size_gb=1,
+                                        requested_size_gb=1)
+
+    def test_extend_vhd_if_needed_smaller_size(self):
+        self._test_extend_vhd_if_needed(virtual_size_gb=2,
+                                        requested_size_gb=1)

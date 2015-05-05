@@ -202,7 +202,8 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
             volume_path, volume_format,
             self.configuration.volume_dd_blocksize)
 
-        self._extend_vhd_if_needed(self.local_path(volume), volume['size'])
+        self._windows_utils.extend_vhd_if_needed(self.local_path(volume),
+                                                 volume['size'])
 
     def _copy_volume_from_snapshot(self, snapshot, volume, volume_size):
         """Copy data from snapshot to destination volume."""
@@ -229,14 +230,4 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
         self._delete(volume_path)
         self.vhdutils.convert_vhd(snapshot_path,
                                   volume_path)
-        self._extend_vhd_if_needed(volume_path, volume_size)
-
-    def _extend_vhd_if_needed(self, vhd_path, new_size_gb):
-        old_size_bytes = self.vhdutils.get_vhd_size(vhd_path)['VirtualSize']
-        new_size_bytes = new_size_gb * units.Gi
-
-        # This also ensures we're not attempting to shrink the image.
-        is_resize_needed = self._windows_utils.is_resize_needed(
-            vhd_path, new_size_bytes, old_size_bytes)
-        if is_resize_needed:
-            self.vhdutils.resize_vhd(vhd_path, new_size_bytes)
+        self._windows_utils.extend_vhd_if_needed(volume_path, volume_size)
