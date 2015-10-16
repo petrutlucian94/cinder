@@ -59,7 +59,7 @@ image_helper_opts = [cfg.StrOpt('image_conversion_dir',
 CONF = cfg.CONF
 CONF.register_opts(image_helper_opts)
 
-VHD_SIGNATURE = 'conectix'
+VHD_SIGNATURE = b'conectix'
 
 
 def qemu_img_info(path, run_as_root=True):
