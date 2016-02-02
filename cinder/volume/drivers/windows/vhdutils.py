@@ -145,6 +145,7 @@ VIRTUAL_DISK_ACCESS_NONE = 0
 VIRTUAL_DISK_ACCESS_ALL = 0x003f0000
 VIRTUAL_DISK_ACCESS_CREATE = 0x00100000
 VIRTUAL_DISK_ACCESS_GET_INFO = 0x80000
+VIRTUAL_DISK_ACCESS_DETACH = 0x00040000
 OPEN_VIRTUAL_DISK_FLAG_NONE = 0
 OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS = 1
 OPEN_VIRTUAL_DISK_VERSION_1 = 1
@@ -371,8 +372,11 @@ class VHDUtils(object):
         vhd_info = {}
         info_members = info_members or self._vhd_info_members
 
-        handle = self._open(vhd_path,
-                            open_access_mask=VIRTUAL_DISK_ACCESS_GET_INFO)
+        open_access_mask = (VIRTUAL_DISK_ACCESS_GET_INFO |
+                            VIRTUAL_DISK_ACCESS_DETACH)
+        handle = self._open(
+            vhd_path,
+            open_access_mask=open_access_mask)
 
         try:
             for member in info_members:

@@ -294,13 +294,15 @@ class VHDUtilsTestCase(test.TestCase):
         self._vhdutils._get_vhd_info_member = mock.Mock(
             return_value=fake_vhd_info)
 
+        expected_access_mask = (vhdutils.VIRTUAL_DISK_ACCESS_GET_INFO |
+                                vhdutils.VIRTUAL_DISK_ACCESS_DETACH)
         ret_val = self._vhdutils.get_vhd_info(self._FAKE_VHD_PATH,
                                               [fake_info_member])
 
         self.assertEqual(fake_vhd_info, ret_val)
         self._vhdutils._open.assert_called_once_with(
             self._FAKE_VHD_PATH,
-            open_access_mask=vhdutils.VIRTUAL_DISK_ACCESS_GET_INFO)
+            open_access_mask=expected_access_mask)
         self._vhdutils._get_vhd_info_member.assert_called_with(
             self._FAKE_FILE_HANDLE, fake_info_member)
         self._vhdutils._close.assert_called_once_with(self._FAKE_FILE_HANDLE)
