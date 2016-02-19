@@ -85,8 +85,8 @@ class WindowsImageCache(imagecache.ImageCache):
             else:
                 self._utils.copy(fetch_path, destination_path)
 
-            if resize_needed:
-                self._resize_image(destination_path, image_size)
+        if resize_needed:
+            self._resize_image(destination_path, image_size)
 
     def _convert_image(self, image_path, destination_path,
                        image_format, image_subformat):
