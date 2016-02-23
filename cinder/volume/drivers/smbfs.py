@@ -147,8 +147,17 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         active_file = self.get_active_image_from_info(volume)
         active_file_path = os.path.join(self._local_volume_dir(volume),
                                         active_file)
-        info = self._qemu_img_info(active_file_path, volume['name'])
-        fmt = info.file_format
+
+        try:
+            info = self._qemu_img_info(active_file_path, volume['name'])
+            fmt = info.file_format
+        except Exception as exc:
+            LOG.warning(_LW("Could not retrieve the image format while "
+                            "providing volume %(volume_id)s connection info. "
+                            "Exception: %(exc)s"),
+                        dict(volume_id=volume['id'],
+                             exc=exc))
+            fmt = None
 
         data = {'export': volume['provider_location'],
                 'format': fmt,
