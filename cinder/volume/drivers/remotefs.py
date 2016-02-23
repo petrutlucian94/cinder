@@ -692,8 +692,8 @@ class RemoteFSSnapDriver(RemoteFSDriver, driver.SnapshotVD):
             info.image = os.path.basename(info.image)
         if info.backing_file:
             backing_file_template = \
-                "(%(basedir)s/[0-9a-f]+/)?%" \
-                "(volname)s(.(tmp-snap-)?[0-9a-f-]+)?$" % {
+                r"(%(basedir)s/[0-9a-f]+/)?%" \
+                r"(volname)s(.(tmp-snap-)?[0-9a-f-]+)?(\.\w+)?$" % {
                     'basedir': basedir,
                     'volname': volume_name
                 }
