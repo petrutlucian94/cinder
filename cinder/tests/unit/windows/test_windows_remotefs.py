@@ -48,6 +48,7 @@ class WindowsRemoteFsTestCase(test.TestCase):
 
         self._remotefs._pathutils.is_symlink.return_value = is_mnt_point_slink
         self._remotefs._smbutils.check_smb_mapping.return_value = False
+        self._remotefs._smbutils.is_local_share.return_value = False
 
         if mnt_point_exists and not is_mnt_point_slink:
             self.assertRaises(exception.SmbfsException,

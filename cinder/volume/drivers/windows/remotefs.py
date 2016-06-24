@@ -33,16 +33,17 @@ class WindowsRemoteFsClient(remotefs.RemoteFsClient):
 
         mnt_point = self.get_mount_point(export_path)
         norm_path = os.path.abspath(export_path)
-        mnt_options = mnt_options or {}
 
-        username = (mnt_options.get('username') or
-                    mnt_options.get('user'))
-        password = (mnt_options.get('password') or
-                    mnt_options.get('pass'))
+        is_local_share = self._smbutils.is_local_share(norm_path)
 
-        if not self._smbutils.check_smb_mapping(
+        if not (is_local_share or self._smbutils.check_smb_mapping(
                 norm_path,
-                remove_unavailable_mapping=True):
+                remove_unavailable_mapping=True)):
+            mnt_options = mnt_options or {}
+            username = (mnt_options.get('username') or
+                        mnt_options.get('user'))
+            password = (mnt_options.get('password') or
+                        mnt_options.get('pass'))
             self._smbutils.mount_smb_share(norm_path,
                                            username=username,
                                            password=password)
@@ -52,4 +53,10 @@ class WindowsRemoteFsClient(remotefs.RemoteFsClient):
                 raise exception.SmbfsException(_("Link path already exists "
                                                  "and its not a symlink"))
         else:
-            self._pathutils.create_sym_link(mnt_point, norm_path)
+            if is_local_share:
+                share_name = norm_path.lstrip('\\').split('\\')[1]
+                symlink_target = self._smbutils.get_smb_share_path(share_name)
+            else:
+                symlink_target = norm_path
+
+            self._pathutils.create_sym_link(mnt_point, symlink_target)
