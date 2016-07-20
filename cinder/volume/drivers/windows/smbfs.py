@@ -103,8 +103,9 @@ class WindowsSmbfsDriver(smbfs.SmbfsDriver):
 
         :param smbfs_share: example //172.18.194.100/var/smbfs
         """
+        mount_point = self._get_mount_point_for_share(smbfs_share)
         total_size, total_available = self._smbutils.get_share_capacity_info(
-            smbfs_share)
+            mount_point)
         total_allocated = self._get_total_allocated(smbfs_share)
         return_value = [total_size, total_available, total_allocated]
         LOG.info(_LI('Smb share %(share)s Total size %(size)s '
