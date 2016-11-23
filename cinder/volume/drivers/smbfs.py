@@ -22,7 +22,6 @@ import os
 from oslo_concurrency import processutils as putils
 from oslo_config import cfg
 from oslo_log import log as logging
-from oslo_utils import fileutils
 from oslo_utils import units
 
 from cinder.brick.remotefs import remotefs
@@ -30,6 +29,7 @@ from cinder import exception
 from cinder.i18n import _, _LI, _LW
 from cinder.image import image_utils
 from cinder import utils
+from cinder.openstack.common import fileutils
 from cinder.volume.drivers import remotefs as remotefs_drv
 
 

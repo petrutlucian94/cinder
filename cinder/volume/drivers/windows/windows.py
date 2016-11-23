@@ -26,7 +26,7 @@ from os_win import utilsfactory
 from oslo_config import cfg
 from oslo_log import log as logging
 
-from oslo_utils import fileutils
+from cinder.openstack.common import fileutils
 from oslo_utils import units
 from oslo_utils import uuidutils
 
