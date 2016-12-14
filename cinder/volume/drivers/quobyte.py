@@ -382,7 +382,7 @@ class QuobyteDriver(remotefs_drv.RemoteFSSnapDriverDistributed):
 
         LOG.debug('Available shares %s', self._mounted_shares)
 
-    def _find_share(self, volume_size_in_gib):
+    def _find_share(self, volume):
         """Returns the mounted Quobyte volume.
 
         Multiple shares are not supported because the virtualization of
@@ -391,7 +391,7 @@ class QuobyteDriver(remotefs_drv.RemoteFSSnapDriverDistributed):
         For different types of volumes e.g., SSD vs. rotating disks, use
         multiple backends in Cinder.
 
-        :param volume_size_in_gib: int size in GB. Ignored by this driver.
+        :param volume: the volume to be created.
         """
 
         if not self._mounted_shares:
