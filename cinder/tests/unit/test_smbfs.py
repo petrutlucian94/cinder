@@ -320,14 +320,14 @@ class SmbFsTestCase(test.TestCase):
         if not mounted_shares:
             self.assertRaises(exception.SmbfsNoSharesMounted,
                               self._smbfs_driver._find_share,
-                              self._FAKE_VOLUME['size'])
+                              self._FAKE_VOLUME)
         elif not eligible_shares:
             self.assertRaises(exception.SmbfsNoSuitableShareFound,
                               self._smbfs_driver._find_share,
-                              self._FAKE_VOLUME['size'])
+                              self._FAKE_VOLUME)
         else:
             ret_value = self._smbfs_driver._find_share(
-                self._FAKE_VOLUME['size'])
+                self._FAKE_VOLUME)
             # The eligible share with the minimum allocated space
             # will be selected
             self.assertEqual('fake_share3', ret_value)

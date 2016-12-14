@@ -158,7 +158,7 @@ class ScalityDriver(remotefs_drv.RemoteFSSnapDriver):
         self._ensure_share_mounted()
         self._mounted_shares = [self.sofs_rel_volume_dir]
 
-    def _find_share(self, volume_size_for):
+    def _find_share(self, volume):
         try:
             return self._mounted_shares[0]
         except IndexError:

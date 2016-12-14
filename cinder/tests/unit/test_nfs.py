@@ -543,12 +543,15 @@ class NfsDriverTestCase(test.TestCase):
         drv._mounted_shares = []
 
         self.assertRaises(exception.NfsNoSharesMounted, drv._find_share,
-                          self.TEST_SIZE_IN_GB)
+                          self._simple_volume())
 
     def test_find_share(self):
         """_find_share simple use case."""
         drv = self._driver
         drv._mounted_shares = [self.TEST_NFS_EXPORT1, self.TEST_NFS_EXPORT2]
+
+        volume = fake_volume.fake_volume_obj(self.context,
+                                             size=self.TEST_SIZE_IN_GB)
 
         with mock.patch.object(
                 drv, '_get_capacity_info') as mock_get_capacity_info:
@@ -556,7 +559,7 @@ class NfsDriverTestCase(test.TestCase):
                 (5 * units.Gi, 2 * units.Gi, 2 * units.Gi),
                 (10 * units.Gi, 3 * units.Gi, 1 * units.Gi)]
             self.assertEqual(self.TEST_NFS_EXPORT2,
-                             drv._find_share(self.TEST_SIZE_IN_GB))
+                             drv._find_share(volume))
             calls = [mock.call(self.TEST_NFS_EXPORT1),
                      mock.call(self.TEST_NFS_EXPORT2)]
             mock_get_capacity_info.assert_has_calls(calls)
@@ -574,7 +577,7 @@ class NfsDriverTestCase(test.TestCase):
                 (10 * units.Gi, 0, 10 * units.Gi)]
 
             self.assertRaises(exception.NfsNoSuitableShareFound,
-                              drv._find_share, self.TEST_SIZE_IN_GB)
+                              drv._find_share, self._simple_volume())
             calls = [mock.call(self.TEST_NFS_EXPORT1),
                      mock.call(self.TEST_NFS_EXPORT2)]
             mock_get_capacity_info.assert_has_calls(calls)
@@ -651,7 +654,7 @@ class NfsDriverTestCase(test.TestCase):
             result = drv.create_volume(volume)
             self.assertEqual(self.TEST_NFS_EXPORT1,
                              result['provider_location'])
-            mock_find_share.assert_called_once_with(self.TEST_SIZE_IN_GB)
+            mock_find_share.assert_called_once_with(volume)
 
     def test_delete_volume(self):
         """delete_volume simple test case."""

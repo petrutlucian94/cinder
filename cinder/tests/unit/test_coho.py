@@ -173,7 +173,7 @@ class CohoDriverTest(test.TestCase):
         drv.create_volume_from_snapshot(VOLUME, SNAPSHOT)
 
         mock_find_share.assert_has_calls(
-            [mock.call(VOLUME['size'])])
+            [mock.call(VOLUME)])
         mock_rpc_client.assert_has_calls(
             [mock.call(ADDR, self.configuration.coho_rpc_port),
              mock.call().create_volume_from_snapshot(
@@ -191,7 +191,7 @@ class CohoDriverTest(test.TestCase):
         drv.create_cloned_volume(VOLUME, CLONE_VOL)
 
         mock_find_share.assert_has_calls(
-            [mock.call(VOLUME['size'])])
+            [mock.call(VOLUME)])
         mock_local_path.assert_has_calls(
             [mock.call(VOLUME), mock.call(CLONE_VOL)])
         mock_execute.assert_has_calls(
