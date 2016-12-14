@@ -72,6 +72,13 @@ volume_opts = [
                default='noperm,file_mode=0775,dir_mode=0775',
                help=('Mount options passed to the smbfs client. See '
                      'mount.cifs man page for details.')),
+    cfg.DictOpt('smbfs_pool_mappings',
+                default={},
+                help=('Mappings between share locations and pool names. '
+                      'If not specified, the share names will be used as '
+                      'pool names. Example: '
+                      '//addr/share:pool_name,//addr/share2:pool_name2')),
+
 ]
 
 CONF = cfg.CONF
@@ -97,7 +104,8 @@ def update_allocation_data(delete=False):
     return wrapper
 
 
-class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
+class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
+                  remotefs_drv.RemoteFSSnapDriver):
     """SMBFS based cinder volume driver."""
 
     driver_volume_type = 'smbfs'
@@ -194,6 +202,29 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         self.shares = {}  # address : options
         self._ensure_shares_mounted()
         self._setup_allocation_data()
+        self._setup_pool_mappings()
+
+    def _setup_pool_mappings(self):
+        self._pool_mappings = self.configuration.smbfs_pool_mappings
+
+        pools = self._pool_mappings.values()
+        duplicate_pools = set([pool for pool in pools
+                               if pools.count(pool) > 1])
+        if duplicate_pools:
+            msg = _("Found multiple mappings for pools %(pools)s. "
+                    "Requested pool mappings: %(pool_mappings)s")
+            raise exception.SmbfsException(
+                msg % dict(pools=duplicate_pools,
+                           pool_mappings=self._pool_mappings))
+
+        shares_missing_mappings = (
+            set(self.shares).difference(set(self._pool_mappings)))
+        for share in shares_missing_mappings:
+            msg = _LW("No pool name was requested for share %(share)s "
+                      "Using the share name instead.")
+            LOG.warning(msg, dict(share=share))
+
+            self._pool_mappings[share] = self._get_share_name(share)
 
     def _setup_allocation_data(self):
         if not os.path.exists(self._alloc_info_file_path):
@@ -382,38 +413,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
 
         total_allocated = self._get_total_allocated(smbfs_share)
         return total_size, total_available, total_allocated
-
-    def _find_share(self, volume):
-        """Choose SMBFS share among available ones for given volume size.
-
-        For instances with more than one share that meets the criteria, the
-        share with the least "allocated" space will be selected.
-        """
-        if not self._mounted_shares:
-            raise exception.SmbfsNoSharesMounted()
-
-        target_share = None
-        target_share_reserved = 0
-
-        for smbfs_share in self._mounted_shares:
-            if not self._is_share_eligible(smbfs_share, volume['size']):
-                continue
-            total_allocated = self._get_total_allocated(smbfs_share)
-            if target_share is not None:
-                if target_share_reserved > total_allocated:
-                    target_share = smbfs_share
-                    target_share_reserved = total_allocated
-            else:
-                target_share = smbfs_share
-                target_share_reserved = total_allocated
-
-        if target_share is None:
-            raise exception.SmbfsNoSuitableShareFound(
-                volume_size=volume['size'])
-
-        LOG.debug('Selected %s as target smbfs share.', target_share)
-
-        return target_share
 
     def _is_share_eligible(self, smbfs_share, volume_size_in_gib):
         """Verifies SMBFS share is eligible to host volume with given size.
@@ -674,3 +673,22 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         data = image_utils.qemu_img_info(path)
         virt_size = data.virtual_size / units.Gi
         return virt_size == size
+
+    def _get_share_name(self, share):
+        return share.replace('/', '\\').lstrip('\\').split('\\', 1)[1]
+
+    def _get_pool_name_from_share(self, share):
+        return self._pool_mappings[share]
+
+    def _get_share_from_pool_name(self, pool_name):
+        mappings = {pool: share
+                    for share, pool in self._pool_mappings.items()}
+        share = mappings.get(pool_name)
+
+        if not share:
+            msg = _("Could not find any share for pool %(pool_name)s. "
+                    "Pool mappings: %(pool_mappings)s.")
+            raise exception.SmbfsException(
+                msg % dict(pool_name=pool_name,
+                           pool_mappings=self._pool_mappings))
+        return share
