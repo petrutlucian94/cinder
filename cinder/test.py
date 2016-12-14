@@ -187,12 +187,12 @@ class TestCase(testtools.TestCase):
         CONF.set_default('sqlite_synchronous', False, 'database')
 
         global _DB_CACHE
-        if not _DB_CACHE:
-            _DB_CACHE = Database(sqla_api, migration,
-                                 sql_connection=CONF.database.connection,
-                                 sqlite_db=CONF.database.sqlite_db,
-                                 sqlite_clean_db=CONF.sqlite_clean_db)
-        self.useFixture(_DB_CACHE)
+        # if not _DB_CACHE:
+        #     _DB_CACHE = Database(sqla_api, migration,
+        #                          sql_connection=CONF.database.connection,
+        #                          sqlite_db=CONF.database.sqlite_db,
+        #                          sqlite_clean_db=CONF.sqlite_clean_db)
+        # self.useFixture(_DB_CACHE)
 
         # emulate some of the mox stuff, we can't use the metaclass
         # because it screws with our generators

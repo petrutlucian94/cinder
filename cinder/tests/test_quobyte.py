@@ -395,7 +395,7 @@ class QuobyteDriverTestCase(test.TestCase):
 
         self.assertRaises(exception.NotFound,
                           drv._find_share,
-                          self.TEST_SIZE_IN_GB)
+                          self._simple_volume())
 
     def test_find_share(self):
         """_find_share simple use case."""
@@ -404,7 +404,7 @@ class QuobyteDriverTestCase(test.TestCase):
         drv._mounted_shares = [self.TEST_QUOBYTE_VOLUME]
 
         self.assertEqual(self.TEST_QUOBYTE_VOLUME,
-                         drv._find_share(self.TEST_SIZE_IN_GB))
+                         drv._find_share(self._simple_volume()))
 
     def test_find_share_does_not_throw_error_if_there_isnt_enough_space(self):
         """_find_share intentionally does not throw when df reports no
@@ -421,7 +421,7 @@ class QuobyteDriverTestCase(test.TestCase):
             drv._mounted_shares = [self.TEST_QUOBYTE_VOLUME]
 
             self.assertEqual(self.TEST_QUOBYTE_VOLUME,
-                             drv._find_share(self.TEST_SIZE_IN_GB))
+                             drv._find_share(self._simple_volume()))
 
             # The current implementation does not call _get_available_capacity.
             # Future ones might do and therefore we mocked it.
@@ -527,7 +527,7 @@ class QuobyteDriverTestCase(test.TestCase):
 
         drv._do_create_volume.assert_called_once_with(volume)
         drv._ensure_shares_mounted.assert_called_once_with()
-        drv._find_share.assert_called_once_with(self.TEST_SIZE_IN_GB)
+        drv._find_share.assert_called_once_with(volume)
 
     def test_create_cloned_volume(self):
         drv = self._driver
@@ -765,7 +765,7 @@ class QuobyteDriverTestCase(test.TestCase):
         drv.create_volume_from_snapshot(new_volume, snap_ref)
 
         drv._ensure_shares_mounted.assert_called_once_with()
-        drv._find_share.assert_called_once_with(new_volume['size'])
+        drv._find_share.assert_called_once_with(new_volume)
         drv._do_create_volume.assert_called_once_with(new_volume)
         (drv._copy_volume_from_snapshot.
          assert_called_once_with(snap_ref, new_volume, new_volume['size']))

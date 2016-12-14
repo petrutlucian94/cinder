@@ -384,15 +384,12 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         total_allocated = self._get_total_allocated(smbfs_share)
         return total_size, total_available, total_allocated
 
-    def _find_share(self, volume_size_in_gib):
+    def _find_share(self, volume):
         """Choose SMBFS share among available ones for given volume size.
 
         For instances with more than one share that meets the criteria, the
         share with the least "allocated" space will be selected.
-
-        :param volume_size_in_gib: int size in GB
         """
-
         if not self._mounted_shares:
             raise exception.SmbfsNoSharesMounted()
 
@@ -400,7 +397,7 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
         target_share_reserved = 0
 
         for smbfs_share in self._mounted_shares:
-            if not self._is_share_eligible(smbfs_share, volume_size_in_gib):
+            if not self._is_share_eligible(smbfs_share, volume['size']):
                 continue
             total_allocated = self._get_total_allocated(smbfs_share)
             if target_share is not None:
@@ -413,7 +410,7 @@ class SmbfsDriver(remotefs_drv.RemoteFSSnapDriver):
 
         if target_share is None:
             raise exception.SmbfsNoSuitableShareFound(
-                volume_size=volume_size_in_gib)
+                volume_size=volume['size'])
 
         LOG.debug('Selected %s as target smbfs share.' % target_share)
 
