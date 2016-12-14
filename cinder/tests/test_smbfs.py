@@ -199,6 +199,7 @@ class SmbFsTestCase(test.TestCase):
         mock_exists.return_value = share_config_exists
         fake_ensure_mounted = mock.MagicMock()
         self._smbfs_driver._ensure_shares_mounted = fake_ensure_mounted
+        self._smbfs_driver._setup_pool_mappings = mock.Mock()
         self._smbfs_driver.configuration = config
 
         if not (config.smbfs_shares_config and share_config_exists and
@@ -212,6 +213,7 @@ class SmbFsTestCase(test.TestCase):
             mock_check_qemu_img_version.assert_called_once_with()
             self.assertEqual(self._smbfs_driver.shares, {})
             fake_ensure_mounted.assert_called_once_with()
+            self._smbfs_driver._setup_pool_mappings.assert_called_once_with()
 
     def test_setup_missing_shares_config_option(self):
         fake_config = copy.copy(self._FAKE_SMBFS_CONFIG)
@@ -232,6 +234,33 @@ class SmbFsTestCase(test.TestCase):
         fake_config = copy.copy(self._FAKE_SMBFS_CONFIG)
         fake_config.smbfs_used_ratio = -1
         self._test_setup(config=fake_config)
+
+    def test_setup_pools(self):
+        pool_mappings = {
+            '//ip/share0': 'pool0',
+            '//ip/share1': 'pool1',
+        }
+        self._smbfs_driver.configuration.smbfs_pool_mappings = pool_mappings
+        self._smbfs_driver.shares = {
+            '//ip/share0': None,
+            '//ip/share1': None,
+            '//ip/share2': None
+        }
+
+        expected_pool_mappings = pool_mappings.copy()
+        expected_pool_mappings['//ip/share2'] = 'share2'
+
+        self._smbfs_driver._setup_pool_mappings()
+        self.assertEqual(expected_pool_mappings,
+                         self._smbfs_driver._pool_mappings)
+
+    def test_setup_pool_duplicates(self):
+        self._smbfs_driver.configuration.smbfs_pool_mappings = {
+            'share0': 'pool0',
+            'share1': 'pool0'
+        }
+        self.assertRaises(exception.SmbfsException,
+                          self._smbfs_driver._setup_pool_mappings)
 
     @mock.patch('os.path.exists')
     def _test_create_volume(self, mock_exists, volume_exists=False,
@@ -292,43 +321,6 @@ class SmbFsTestCase(test.TestCase):
 
     def test_create_regular(self):
         self._test_create_volume()
-
-    def _test_find_share(self, existing_mounted_shares=True,
-                         eligible_shares=True):
-        if existing_mounted_shares:
-            mounted_shares = ('fake_share1', 'fake_share2', 'fake_share3')
-        else:
-            mounted_shares = None
-
-        self._smbfs_driver._mounted_shares = mounted_shares
-        self._smbfs_driver._is_share_eligible = mock.Mock(
-            return_value=eligible_shares)
-        self._smbfs_driver._get_total_allocated = mock.Mock(
-            side_effect=[3, 2, 1])
-
-        if not mounted_shares:
-            self.assertRaises(exception.SmbfsNoSharesMounted,
-                              self._smbfs_driver._find_share,
-                              self._FAKE_VOLUME)
-        elif not eligible_shares:
-            self.assertRaises(exception.SmbfsNoSuitableShareFound,
-                              self._smbfs_driver._find_share,
-                              self._FAKE_VOLUME)
-        else:
-            ret_value = self._smbfs_driver._find_share(
-                self._FAKE_VOLUME)
-            # The eligible share with the minimum allocated space
-            # will be selected
-            self.assertEqual(ret_value, 'fake_share3')
-
-    def test_find_share(self):
-        self._test_find_share()
-
-    def test_find_share_missing_mounted_shares(self):
-        self._test_find_share(existing_mounted_shares=False)
-
-    def test_find_share_missing_eligible_shares(self):
-        self._test_find_share(eligible_shares=False)
 
     def _test_is_share_eligible(self, capacity_info, volume_size):
         self._smbfs_driver._get_capacity_info = mock.Mock(
@@ -728,3 +720,26 @@ class SmbFsTestCase(test.TestCase):
                     fake_block_size * fake_avail_blocks,
                     self._FAKE_TOTAL_ALLOCATED)
         self.assertEqual(expected, ret_val)
+
+    def test_get_pool_name_from_share(self):
+        self._smbfs_driver._pool_mappings = {
+            mock.sentinel.share: mock.sentinel.pool}
+
+        pool = self._smbfs_driver._get_pool_name_from_share(
+            mock.sentinel.share)
+        self.assertEqual(mock.sentinel.pool, pool)
+
+    def test_get_share_from_pool_name(self):
+        self._smbfs_driver._pool_mappings = {
+            mock.sentinel.share: mock.sentinel.pool}
+
+        share = self._smbfs_driver._get_share_from_pool_name(
+            mock.sentinel.pool)
+        self.assertEqual(mock.sentinel.share, share)
+
+    def test_get_pool_name_from_share_exception(self):
+        self._smbfs_driver._pool_mappings = {}
+
+        self.assertRaises(exception.SmbfsException,
+                          self._smbfs_driver._get_share_from_pool_name,
+                          mock.sentinel.pool)
