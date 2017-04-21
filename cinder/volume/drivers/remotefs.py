@@ -938,9 +938,9 @@ class RemoteFSSnapDriverBase(RemoteFSDriver):
                  {'src': src_vref.id,
                   'dst': volume.id})
 
-        if src_vref.status not in ['available', 'backing-up']:
-            msg = _("Source volume status must be 'available', or "
-                    "'backing-up' but is: "
+        if src_vref.status not in ['available', 'backing-up', 'cloning']:
+            msg = _("Source volume status must be 'available', "
+                    "'backing-up' or 'cloning' but is: "
                     "%(status)s.") % {'status': src_vref.status}
             raise exception.InvalidVolume(msg)
 
@@ -1019,9 +1019,9 @@ class RemoteFSSnapDriverBase(RemoteFSDriver):
 
         volume_status = snapshot.volume.status
         if volume_status not in ['available', 'in-use',
-                                 'backing-up', 'deleting']:
+                                 'backing-up', 'deleting', 'cloning']:
             msg = _("Volume status must be 'available', 'in-use', "
-                    "'backing-up' or 'deleting' but is: "
+                    "'backing-up', 'deleting' or 'cloning' but is: "
                     "%(status)s.") % {'status': volume_status}
 
             raise exception.InvalidVolume(msg)
@@ -1329,9 +1329,9 @@ class RemoteFSSnapDriverBase(RemoteFSDriver):
                             else 'offline')})
 
         status = snapshot.volume.status
-        if status not in ['available', 'in-use', 'backing-up']:
-            msg = _("Volume status must be 'available', 'in-use' or "
-                    "'backing-up' but is: "
+        if status not in ['available', 'in-use', 'backing-up', 'cloning']:
+            msg = _("Volume status must be 'available', 'in-use', "
+                    "'backing-up' or 'cloning' but is: "
                     "%(status)s.") % {'status': status}
 
             raise exception.InvalidVolume(msg)
