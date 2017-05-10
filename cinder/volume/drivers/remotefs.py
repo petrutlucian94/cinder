@@ -919,19 +919,27 @@ class RemoteFSSnapDriverBase(RemoteFSDriver):
                                       upload_path,
                                       run_as_root=self._execute_as_root)
 
-    def get_active_image_from_info(self, volume):
-        """Returns filename of the active image from the info file."""
-
+    def get_active_image_from_info(self, volume, full_local_path=False):
+        """Returns the active image from the info file.
+        :param full_local_path: If enabled, returns the full image path,
+                                using the local mountpoint instead of the
+                                image file name.
+        """
         info_file = self._local_path_volume_info(volume)
 
         snap_info = self._read_info_file(info_file, empty_if_missing=True)
 
         if not snap_info:
             # No info file = no snapshots exist
-            vol_path = os.path.basename(self.local_path(volume))
-            return vol_path
+            active_fname = os.path.basename(self.local_path(volume))
+        else:
+            active_fname = snap_info['active']
 
-        return snap_info['active']
+        if full_local_path:
+            vol_dir = self._local_volume_dir(volume)
+            active_fpath = os.path.join(vol_dir, active_fname)
+            return active_fpath
+        return active_fname
 
     def _create_cloned_volume(self, volume, src_vref):
         LOG.info('Cloning volume %(src)s to volume %(dst)s',
