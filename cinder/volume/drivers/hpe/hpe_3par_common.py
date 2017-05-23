@@ -247,10 +247,14 @@ class HPE3PARCommon(object):
         3.0.27 - Fix snapCPG error during backup of attached volume.
                  Bug #1646396 and also ,Fix backup of attached ISCSI
                  and CHAP enabled volume.bug #1644238.
+        3.0.28 - Remove un-necessary snapshot creation of source volume
+                 while doing online copy in create_cloned_volume call.
+                 Bug #1661541
+        3.0.29 - Fix convert snapshot volume to base volume type. bug #1656186
 
     """
 
-    VERSION = "3.0.27"
+    VERSION = "3.0.29"
 
     stats = {}
 
@@ -2021,15 +2025,13 @@ class HPE3PARCommon(object):
             if volume['size'] == src_vref['size'] and not (
                back_up_process and vol_chap_enabled):
                 LOG.debug("Creating a clone of volume, using online copy.")
-                # create a temporary snapshot
-                snapshot = self._create_temp_snapshot(src_vref)
 
                 type_info = self.get_volume_settings_from_type(volume)
                 cpg = type_info['cpg']
 
                 # make the 3PAR copy the contents.
                 # can't delete the original until the copy is done.
-                self._copy_volume(snapshot['name'], vol_name, cpg=cpg,
+                self._copy_volume(src_vol_name, vol_name, cpg=cpg,
                                   snap_cpg=type_info['snap_cpg'],
                                   tpvv=type_info['tpvv'],
                                   tdvv=type_info['tdvv'])
@@ -2236,13 +2238,15 @@ class HPE3PARCommon(object):
 
             self.client.createSnapshot(volume_name, snap_name, optional)
 
+            # Convert snapshot volume to base volume type
+            LOG.debug('Converting to base volume type: %s.',
+                      volume['id'])
+            model_update = self._convert_to_base_volume(volume)
+
             # Grow the snapshot if needed
             growth_size = volume['size'] - snapshot['volume_size']
             if growth_size > 0:
                 try:
-                    LOG.debug('Converting to base volume type: %s.',
-                              volume['id'])
-                    model_update = self._convert_to_base_volume(volume)
                     growth_size_mib = growth_size * units.Gi / units.Mi
                     LOG.debug('Growing volume: %(id)s by %(size)s GiB.',
                               {'id': volume['id'], 'size': growth_size})
