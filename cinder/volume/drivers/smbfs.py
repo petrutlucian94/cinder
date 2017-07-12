@@ -13,10 +13,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import decorator
-
-import inspect
-import json
 import os
 
 from oslo_concurrency import processutils as putils
@@ -25,11 +21,11 @@ from oslo_log import log as logging
 from oslo_utils import units
 
 from cinder.brick.remotefs import remotefs
+from cinder import context
 from cinder import exception
 from cinder.i18n import _, _LI, _LW
 from cinder.image import image_utils
 from cinder import utils
-from cinder.openstack.common import fileutils
 from cinder.volume.drivers import remotefs as remotefs_drv
 
 
@@ -44,7 +40,8 @@ volume_opts = [
     cfg.StrOpt('smbfs_allocation_info_file_path',
                default='$state_path/allocation_data',
                help=('The path of the automatically generated file containing '
-                     'information about volume disk space allocation.')),
+                     'information about volume disk space allocation.'),
+               deprecated_for_removal=True),
     cfg.StrOpt('smbfs_default_volume_format',
                default='qcow2',
                choices=['raw', 'qcow2', 'vhd', 'vhdx'],
@@ -85,25 +82,6 @@ CONF = cfg.CONF
 CONF.register_opts(volume_opts)
 
 
-def update_allocation_data(delete=False):
-    @decorator.decorator
-    def wrapper(func, inst, *args, **kwargs):
-        ret_val = func(inst, *args, **kwargs)
-
-        call_args = inspect.getcallargs(func, inst, *args, **kwargs)
-        volume = call_args['volume']
-        requested_size = call_args.get('size_gb', None)
-
-        if delete:
-            allocated_size_gb = None
-        else:
-            allocated_size_gb = requested_size or volume['size']
-
-        inst.update_disk_allocation_data(volume, allocated_size_gb)
-        return ret_val
-    return wrapper
-
-
 class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
                   remotefs_drv.RemoteFSSnapDriver):
     """SMBFS based cinder volume driver."""
@@ -140,7 +118,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
             smbfs_mount_point_base=self.base,
             smbfs_mount_options=opts)
         self.img_suffix = None
-        self._alloc_info_file_path = CONF.smbfs_allocation_info_file_path
 
     def _qemu_img_info(self, path, volume_name):
         return super(SmbfsDriver, self)._qemu_img_info_base(
@@ -202,7 +179,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
 
         self.shares = {}  # address : options
         self._ensure_shares_mounted()
-        self._setup_allocation_data()
         self._setup_pool_mappings()
 
     def _setup_pool_mappings(self):
@@ -227,49 +203,14 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
 
             self._pool_mappings[share] = self._get_share_name(share)
 
-    def _setup_allocation_data(self):
-        if not os.path.exists(self._alloc_info_file_path):
-            fileutils.ensure_tree(
-                os.path.dirname(self._alloc_info_file_path))
-            self._allocation_data = {}
-            self._update_allocation_data_file()
-        else:
-            with open(self._alloc_info_file_path, 'r') as f:
-                self._allocation_data = json.load(f)
-
-    def update_disk_allocation_data(self, volume, virtual_size_gb=None):
-        volume_name = volume['name']
-        smbfs_share = volume['provider_location']
-        if smbfs_share:
-            share_hash = self._get_hash_str(smbfs_share)
-        else:
-            return
-
-        share_alloc_data = self._allocation_data.get(share_hash, {})
-        old_virtual_size = share_alloc_data.get(volume_name, 0)
-        total_allocated = share_alloc_data.get('total_allocated', 0)
-
-        if virtual_size_gb:
-            share_alloc_data[volume_name] = virtual_size_gb
-            total_allocated += virtual_size_gb - old_virtual_size
-        elif share_alloc_data.get(volume_name):
-            # The volume is deleted.
-            del share_alloc_data[volume_name]
-            total_allocated -= old_virtual_size
-
-        share_alloc_data['total_allocated'] = total_allocated
-        self._allocation_data[share_hash] = share_alloc_data
-        self._update_allocation_data_file()
-
-    def _update_allocation_data_file(self):
-        with open(self._alloc_info_file_path, 'w') as f:
-            json.dump(self._allocation_data, f)
-
     def _get_total_allocated(self, smbfs_share):
-        share_hash = self._get_hash_str(smbfs_share)
-        share_alloc_data = self._allocation_data.get(share_hash, {})
-        total_allocated = share_alloc_data.get('total_allocated', 0) << 30
-        return float(total_allocated)
+        pool_name = self._get_pool_name_from_share(smbfs_share)
+        host = "#".join([self.host, pool_name])
+
+        vol_sz_sum = self.db.volume_data_get_for_host(
+            context=context.get_admin_context(),
+            host=host)[1]
+        return float(vol_sz_sum * units.Gi)
 
     def local_path(self, volume):
         """Get volume path (mounted locally fs path) for given volume.
@@ -331,7 +272,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
         return volume_format
 
     @remotefs_drv.locked_volume_id_operation
-    @update_allocation_data(delete=True)
     def delete_volume(self, volume):
         """Deletes a logical volume."""
         if not volume['provider_location']:
@@ -363,7 +303,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
                       run_as_root=True)
 
     @remotefs_drv.locked_volume_id_operation
-    @update_allocation_data()
     def create_volume(self, volume):
         return super(SmbfsDriver, self).create_volume(volume)
 
@@ -474,7 +413,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
             raise exception.InvalidVolume(err_msg)
 
     @remotefs_drv.locked_volume_id_operation
-    @update_allocation_data()
     def extend_volume(self, volume, size_gb):
         LOG.info(_LI('Extending volume %s.'), volume['id'])
         self._extend_volume(volume, size_gb)
@@ -525,11 +463,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
             raise exception.ExtendVolumeError(reason='Insufficient space to '
                                               'extend volume %s to %sG.'
                                               % (volume['id'], size_gb))
-
-    @remotefs_drv.locked_volume_id_operation
-    @update_allocation_data()
-    def create_volume_from_snapshot(self, volume, snapshot):
-        return self._create_volume_from_snapshot(volume, snapshot)
 
     def _copy_volume_from_snapshot(self, snapshot, volume, volume_size):
         """Copy data from snapshot to destination volume.
@@ -587,12 +520,6 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
                 image_id=image_id,
                 reason=(_("Expected volume size was %d") % volume['size'])
                 + (_(" but size is now %d.") % virt_size))
-
-    @remotefs_drv.locked_volume_id_operation
-    @update_allocation_data()
-    def create_cloned_volume(self, volume, src_vref):
-        """Creates a clone of the specified volume."""
-        return self._create_cloned_volume(volume, src_vref)
 
     def _ensure_share_mounted(self, smbfs_share):
         mnt_flags = []
