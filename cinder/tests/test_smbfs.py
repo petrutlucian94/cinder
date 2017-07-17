@@ -51,15 +51,17 @@ class SmbFsTestCase(test.TestCase):
     _FAKE_OPTIONS_DICT = {'username': 'Administrator',
                           'password': '12345'}
 
-    _FAKE_SMBFS_CONFIG = mock.MagicMock()
-    _FAKE_SMBFS_CONFIG.smbfs_oversub_ratio = 2
-    _FAKE_SMBFS_CONFIG.smbfs_used_ratio = 0.5
-    _FAKE_SMBFS_CONFIG.smbfs_shares_config = '/fake/config/path'
-    _FAKE_SMBFS_CONFIG.smbfs_default_volume_format = 'raw'
-    _FAKE_SMBFS_CONFIG.smbfs_sparsed_volumes = False
-
     def setUp(self):
         super(SmbFsTestCase, self).setUp()
+
+        self._FAKE_SMBFS_CONFIG = mock.MagicMock(
+            max_over_subscription_ratio = 2,
+            reserved_percentage=50,
+            smbfs_oversub_ratio = 2,
+            smbfs_used_ratio = 0.5,
+            smbfs_shares_config = '/fake/config/path',
+            smbfs_default_volume_format = 'raw',
+            smbfs_sparsed_volumes = False)
 
         self._smbfs_driver = smbfs.SmbfsDriver(configuration=mock.Mock())
         self._smbfs_driver._remotefsclient = mock.Mock()

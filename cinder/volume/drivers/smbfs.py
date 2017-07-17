@@ -385,8 +385,8 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
         :param volume_size_in_gib: int size in GB
         """
 
-        used_ratio = self.configuration.smbfs_used_ratio
-        oversub_ratio = self.configuration.smbfs_oversub_ratio
+        used_ratio = 1 - self.configuration.reserved_percentage / 100.0
+        oversub_ratio = self.configuration.max_over_subscription_ratio
         requested_volume_size = volume_size_in_gib * units.Gi
 
         total_size, total_available, total_allocated = \
