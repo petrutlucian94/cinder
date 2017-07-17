@@ -120,6 +120,8 @@ class SmbFsTestCase(test.TestCase):
             fake_ensure_mounted.assert_called_once_with()
             self._smbfs_driver._setup_pool_mappings.assert_called_once_with()
 
+        self.assertTrue(self._smbfs_driver._thin_provisioning_support)
+
     def test_setup_missing_shares_config_option(self):
         fake_config = copy.copy(self._FAKE_SMBFS_CONFIG)
         fake_config.smbfs_shares_config = None

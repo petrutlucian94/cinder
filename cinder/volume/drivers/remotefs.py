@@ -131,16 +131,16 @@ class RemoteFSDriver(driver.VolumeDriver):
     vendor_name = 'Open Source'
     SHARE_FORMAT_REGEX = r'.+:/.+'
 
+    # We let the drivers inheriting this specify
+    # whether thin provisioning is supported or not.
+    _thin_provisioning_support = False
+
     def __init__(self, *args, **kwargs):
         super(RemoteFSDriver, self).__init__(*args, **kwargs)
         self.shares = {}
         self._mounted_shares = []
         self._execute_as_root = True
         self._is_voldb_empty_at_startup = kwargs.pop('is_vol_db_empty', None)
-
-        # We let the drivers inheriting this specify
-        # whether thin provisioning is supported.
-        self._thin_provisioning_support = False
 
         if self.configuration:
             self.configuration.append_config_values(nas_opts)

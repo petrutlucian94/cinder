@@ -112,6 +112,8 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
                                 _DISK_FORMAT_VHD, _DISK_FORMAT_VHDX]
     _VALID_IMAGE_EXTENSIONS = _SUPPORTED_IMAGE_FORMATS
 
+    _thin_provisioning_support = True
+
     def __init__(self, execute=putils.execute, *args, **kwargs):
         self._remotefsclient = None
         super(SmbfsDriver, self).__init__(*args, **kwargs)
