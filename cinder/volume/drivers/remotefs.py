@@ -1446,11 +1446,6 @@ class RemoteFSPoolMixin(object):
         # We let the scheduler choose a pool for us.
         pool_name = self._get_pool_name_from_volume(volume)
         share = self._get_share_from_pool_name(pool_name)
-
-        if not self._is_share_eligible(share, volume['size']):
-            err_msg = _("The requested share (%s) does not have enough space "
-                        "to store this volume.") % share
-            raise exception.RemoteFSException(err_msg)
         return share
 
     def _get_pool_name_from_volume(self, volume):

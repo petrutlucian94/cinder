@@ -399,37 +399,6 @@ class RemoteFSPoolMixinTestCase(test.TestCase):
 
         self.context = mock.sentinel.context
 
-    @ddt.data(True, False)
-    @mock.patch.object(remotefs.RemoteFSPoolMixin,
-                       '_is_share_eligible', create=True)
-    @mock.patch.object(remotefs.RemoteFSPoolMixin,
-                       '_get_pool_name_from_volume')
-    @mock.patch.object(remotefs.RemoteFSPoolMixin,
-                       '_get_share_from_pool_name')
-    def test_find_share(self, is_share_eligible,
-                        mock_get_share_from_pool,
-                        mock_get_pool_from_volume,
-                        mock_is_share_eligible):
-        fake_vol = RemoteFsSnapDriverTestCase._FAKE_VOLUME
-        mock_is_share_eligible.return_value = is_share_eligible
-
-        if is_share_eligible:
-            share = self._driver._find_share(fake_vol)
-            self.assertEqual(mock_get_share_from_pool.return_value,
-                             share)
-        else:
-            self.assertRaises(exception.RemoteFSException,
-                              self._driver._find_share,
-                              fake_vol)
-
-        mock_get_pool_from_volume.assert_called_once_with(
-            fake_vol)
-        mock_get_share_from_pool.assert_called_once_with(
-            mock_get_pool_from_volume.return_value)
-        mock_is_share_eligible.assert_called_once_with(
-            mock_get_share_from_pool.return_value,
-            fake_vol['size'])
-
     def test_get_pool_name_from_volume(self):
         fake_pool = 'fake_pool'
         fake_host = 'fake_host@fake_backend#%s' % fake_pool

@@ -133,6 +133,20 @@ class SmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
         return super(SmbfsDriver, self)._qemu_img_info_base(
             path, volume_name, self.configuration.smbfs_mount_point_base)
 
+    def _find_share(self, volume):
+        share = super(SmbfsDriver, self)._find_share(volume)
+
+        # When getting the total allocated space for this share, we're
+        # querying the DB, summing up the volume sizes. This includes
+        # volumes in 'creating' state, so we're avoiding double counting
+        # this volume by passing '0' as requested volume size.
+        if not self._is_share_eligible(share, 0):
+            err_msg = _("The requested share (%s) does not have enough space "
+                        "to store this volume.") % share
+            raise exception.RemoteFSException(err_msg)
+
+        return share
+
     @remotefs_drv.locked_volume_id_operation
     def initialize_connection(self, volume, connector):
         """Allow connection to connector and return connection info.

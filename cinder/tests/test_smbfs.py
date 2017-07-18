@@ -15,6 +15,7 @@
 import copy
 import os
 
+import ddt
 import mock
 
 from cinder import exception
@@ -24,6 +25,7 @@ from cinder.volume.drivers import remotefs
 from cinder.volume.drivers import smbfs
 
 
+@ddt.ddt
 class SmbFsTestCase(test.TestCase):
 
     _FAKE_SHARE = '//1.2.3.4/share1'
@@ -71,6 +73,37 @@ class SmbFsTestCase(test.TestCase):
         self._smbfs_driver.base = self._FAKE_MNT_BASE
 
         self.addCleanup(mock.patch.stopall)
+
+    @ddt.data(True, False)
+    @mock.patch.object(smbfs.SmbfsDriver,
+                       '_is_share_eligible')
+    @mock.patch.object(smbfs.SmbfsDriver,
+                       '_get_pool_name_from_volume')
+    @mock.patch.object(smbfs.SmbfsDriver,
+                       '_get_share_from_pool_name')
+    def test_find_share(self, is_share_eligible,
+                        mock_get_share_from_pool,
+                        mock_get_pool_from_volume,
+                        mock_is_share_eligible):
+        fake_vol = self._FAKE_VOLUME
+        mock_is_share_eligible.return_value = is_share_eligible
+
+        if is_share_eligible:
+            share = self._smbfs_driver._find_share(fake_vol)
+            self.assertEqual(mock_get_share_from_pool.return_value,
+                             share)
+        else:
+            self.assertRaises(exception.RemoteFSException,
+                              self._smbfs_driver._find_share,
+                              fake_vol)
+
+        mock_get_pool_from_volume.assert_called_once_with(
+            fake_vol)
+        mock_get_share_from_pool.assert_called_once_with(
+            mock_get_pool_from_volume.return_value)
+        mock_is_share_eligible.assert_called_once_with(
+            mock_get_share_from_pool.return_value,
+            0)
 
     def _get_fake_allocation_data(self):
         return {self._FAKE_SHARE_HASH: {
