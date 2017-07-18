@@ -390,30 +390,51 @@ class RemoteFsSnapDriverTestCase(test.TestCase):
                                  valid_backing_file=False)
 
 
+@ddt.ddt
 class RemoteFSPoolMixinTestCase(test.TestCase):
     def setUp(self):
         super(RemoteFSPoolMixinTestCase, self).setUp()
         # We'll instantiate this directly for now.
         self._driver = remotefs.RemoteFSPoolMixin()
 
+        self.context = mock.sentinel.context
+
+    @ddt.data(True, False)
+    @mock.patch.object(remotefs.RemoteFSPoolMixin,
+                       '_is_share_eligible', create=True)
     @mock.patch.object(remotefs.RemoteFSPoolMixin,
                        '_get_pool_name_from_volume')
     @mock.patch.object(remotefs.RemoteFSPoolMixin,
                        '_get_share_from_pool_name')
-    def test_find_share(self, mock_get_share_from_pool,
-                        mock_get_pool_from_volume):
-        share = self._driver._find_share(mock.sentinel.volume)
+    def test_find_share(self, is_share_eligible,
+                        mock_get_share_from_pool,
+                        mock_get_pool_from_volume,
+                        mock_is_share_eligible):
+        fake_vol = RemoteFsSnapDriverTestCase._FAKE_VOLUME
+        mock_is_share_eligible.return_value = is_share_eligible
 
-        self.assertEqual(mock_get_share_from_pool.return_value, share)
+        if is_share_eligible:
+            share = self._driver._find_share(fake_vol)
+            self.assertEqual(mock_get_share_from_pool.return_value,
+                             share)
+        else:
+            self.assertRaises(exception.RemoteFSException,
+                              self._driver._find_share,
+                              fake_vol)
+
         mock_get_pool_from_volume.assert_called_once_with(
-            mock.sentinel.volume)
+            fake_vol)
         mock_get_share_from_pool.assert_called_once_with(
             mock_get_pool_from_volume.return_value)
+        mock_is_share_eligible.assert_called_once_with(
+            mock_get_share_from_pool.return_value,
+            fake_vol['size'])
 
     def test_get_pool_name_from_volume(self):
         fake_pool = 'fake_pool'
         fake_host = 'fake_host@fake_backend#%s' % fake_pool
-        fake_vol = dict(host=fake_host)
+        fake_vol = dict(provider_location='fake_share',
+                        host=fake_host)
 
         pool_name = self._driver._get_pool_name_from_volume(fake_vol)
         self.assertEqual(fake_pool, pool_name)
