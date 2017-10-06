@@ -784,10 +784,18 @@ class RemoteFSSnapDriverBase(RemoteFSDriver):
                 }
             if not re.match(backing_file_template, info.backing_file,
                             re.IGNORECASE):
-                msg = _("File %(path)s has invalid backing file "
-                        "%(bfile)s, aborting.") % {'path': path,
-                                                   'bfile': info.backing_file}
-                raise exception.RemoteFSException(msg)
+                # msg = _("File %(path)s has invalid backing file "
+                #         "%(bfile)s, aborting.") % {'path': path,
+                #                                    'bfile': info.backing_file}
+                # raise exception.RemoteFSException(msg)
+                #
+                # This is a quick hack to allow having backing files
+                # placed that were not created by cinder, needed when
+                # importing volumes. We may allow importing them as snapshots
+                # afterwards.
+                LOG.warning("Found a backing file that was not created "
+                            "by Cinder. The default behavior is to reject "
+                            "such images. Continuing for now...")
 
             info.backing_file = os.path.basename(info.backing_file)
 
