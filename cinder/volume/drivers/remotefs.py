@@ -18,6 +18,7 @@ import collections
 import hashlib
 import inspect
 import json
+import math
 import os
 import re
 import shutil
@@ -1737,3 +1738,130 @@ class RemoteFSPoolMixin(object):
         data['pools'] = pools
 
         self._stats = data
+
+
+class RemoteFSManageableVolumesMixin(object):
+    def _get_existing_vol_ref_details(self, existing_ref):
+        if 'source-name' not in existing_ref:
+            reason = _('The existing volume reference '
+                       'must contain "source-name".')
+            raise exception.ManageExistingInvalidReference(
+                existing_ref=existing_ref, reason=reason)
+
+        vol_remote_path = existing_ref['source-name']
+        vol_share, vol_fname = vol_remote_path.rsplit('/', 1)
+
+        for mounted_share in self._mounted_shares:
+            # We don't currently attempt to resolve hostnames. This could
+            # be troublesome for some distributed shares, which may have
+            # hostnames resolving to multiple addresses.
+            if mounted_share != vol_share:
+                continue
+
+            LOG.debug("Found mounted share referenced by %s.", vol_remote_path)
+
+            mountpoint = self._get_mount_point_for_share(mounted_share)
+            vol_local_path = os.path.join(mountpoint, vol_fname)
+
+            if os.path.isfile(vol_local_path):
+                LOG.debug("Found volume %(path)s on share %(share)s.",
+                          dict(path=vol_local_path, share=mounted_share))
+                return dict(share=mounted_share,
+                            mountpoint=mountpoint,
+                            vol_fname=vol_fname,
+                            vol_local_path=vol_local_path,
+                            vol_remote_path=vol_remote_path)
+            else:
+                LOG.error("Could not find volume %s on the "
+                          "specified share.", vol_remote_path)
+                break
+
+        raise exception.ManageExistingInvalidReference(
+            existing_ref=existing_ref, reason=_('Volume not found.'))
+
+    def _get_managed_vol_expected_path(self, volume, vol_ref_details):
+        # This may be overridden by other drivers.
+        return os.path.join(vol_ref_details['mountpoint'],
+                            volume.name)
+
+    def _is_volume_manageable(self, volume, volume_path):
+        manageable = True
+        unmanageable_reason = None  # This could become a list.
+
+        img_info = image_utils.qemu_img_info(
+            volume_path, run_as_root=self._execute_as_root)
+        backing_file = img_info.backing_file
+
+        # TODO(lpetrut): there should be a config option, stating whether
+        # backing files are allowed or not.
+        #
+        # We're checking the backing file chain (if any).
+        while backing_file:
+            LOG.info("The imported volume has a backing file: %s.",
+                     backing_file)
+            if os.path.dirname(backing_file):
+                # We may consider attempting to move such backing files.
+                unmanageable_reason = _(
+                    'Backing files of imported images must use '
+                    'relative paths and reside in the same directory.')
+                manageable = False
+
+            backing_file_full_path = os.path.join(
+                os.path.dirname(volume_path),
+                backing_file)
+            img_info = image_utils.qemu_img_info(
+                backing_file_full_path,
+                run_as_root=self._execute_as_root)
+            backing_file = img_info.backing_file
+
+        # todo: check vmdk extents location
+        return manageable, unmanageable_reason
+
+    def manage_existing(self, volume, existing_ref):
+        LOG.info('Managing volume %(volume_id)s with ref %(ref)s',
+                 {'volume_id': volume.id, 'ref': existing_ref})
+
+        vol_details = self._get_existing_vol_ref_details(existing_ref)
+        vol_local_path = vol_details['vol_local_path']
+
+        manageable, unmanageable_reason = self._is_volume_manageable(
+            volume, vol_local_path)
+
+        if not manageable:
+            raise exception.ManageExistingInvalidReference(
+                existing_ref=existing_ref, reason=unmanageable_reason)
+
+        expected_vol_path = self._get_managed_vol_expected_path(
+            volume, vol_details)
+        # We're only setting rw permissions on the top image. We could
+        # consider doing so for backing files as well.
+        self._set_rw_permissions(vol_local_path)
+
+        # This should be the last thing we do.
+        if expected_vol_path != vol_local_path:
+            LOG.info("Renaming imported volume image %(src)s to %(dest)s",
+                     dict(src=vol_details['vol_local_path'],
+                          dest=expected_vol_path))
+            os.rename(vol_details['vol_local_path'],
+                      expected_vol_path)
+
+        return {'provider_location': vol_details['share']}
+
+    def manage_existing_get_size(self, volume, existing_ref):
+        vol_details = self._get_existing_vol_ref_details(existing_ref)
+        volume_path = vol_details['vol_local_path']
+
+        # We're avoiding using RemoteFS._qemu_img_info_base as it expects
+        # the backing files (if any) to include the volume name. In case of
+        # imported volumes, this may not be the case.
+        #
+        # TODO(lpetrut): allow passing custom experessions to
+        # '_qemu_img_info_base' so that we may validate the backing files.
+        image_size = image_utils.qemu_img_info(
+            volume_path, run_as_root=self._execute_as_root).virtual_size
+        vol_size = int(math.ceil(float(image_size) / units.Gi))
+
+        return vol_size
+
+    def unmanage(self, volume):
+        pass
