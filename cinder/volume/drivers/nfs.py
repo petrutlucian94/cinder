@@ -142,7 +142,7 @@ class NfsDriver(remotefs.RemoteFSManageableVolumesMixin,
         }
 
         # Test file for raw vs. qcow2 format
-        if info.file_format not in ['raw', 'qcow2']:
+        if info.file_format not in ['raw', 'qcow2', 'vmdk']:
             msg = _('nfs volume must be a valid raw or qcow2 image.')
             raise exception.InvalidVolume(reason=msg)
 
