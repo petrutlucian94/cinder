@@ -76,7 +76,8 @@ CONF.register_opts(nfs_opts, group=configuration.SHARED_CONF_GROUP)
 
 
 @interface.volumedriver
-class NfsDriver(remotefs.RemoteFSSnapDriverDistributed, driver.ExtendVD):
+class NfsDriver(remotefs.RemoteFSManageableVolumesMixin,
+                remotefs.RemoteFSSnapDriverDistributed, driver.ExtendVD):
     """NFS based cinder driver.
 
     Creates file on NFS share for using it as block device on hypervisor.
