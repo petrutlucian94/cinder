@@ -14,6 +14,7 @@
 #    under the License.
 
 import os
+import re
 import sys
 
 from os_brick.remotefs import windows_remotefs as remotefs_brick
@@ -93,6 +94,7 @@ CONF.set_default('reserved_percentage', 5)
 
 @interface.volumedriver
 class WindowsSmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
+                         remotefs_drv.RemoteFSManageableVolumesMixin,
                          remotefs_drv.RemoteFSSnapDriverDistributed):
     VERSION = VERSION
 
@@ -111,8 +113,12 @@ class WindowsSmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
 
     _MINIMUM_QEMU_IMG_VERSION = '1.6'
 
-    _SUPPORTED_IMAGE_FORMATS = [_DISK_FORMAT_VHD, _DISK_FORMAT_VHDX]
-    _VALID_IMAGE_EXTENSIONS = _SUPPORTED_IMAGE_FORMATS
+    _SUPPORTED_IMAGE_FORMATS = [_DISK_FORMAT_VHD,
+                                _DISK_FORMAT_VHD_LEGACY,
+                                _DISK_FORMAT_VHDX]
+    _VALID_IMAGE_EXTENSIONS = [_DISK_FORMAT_VHD, _DISK_FORMAT_VHDX]
+    _MANAGEABLE_IMAGE_RE = re.compile(
+        '.*\.(?:%s)' % '|'.join(_VALID_IMAGE_EXTENSIONS))
 
     _always_use_temp_snap_when_cloning = False
     _thin_provisioning_support = True
@@ -264,7 +270,7 @@ class WindowsSmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
         return local_path_template
 
     def _lookup_local_volume_path(self, volume_path_template):
-        for ext in self._SUPPORTED_IMAGE_FORMATS:
+        for ext in self._VALID_IMAGE_EXTENSIONS:
             volume_path = (volume_path_template + '.' + ext
                            if ext else volume_path_template)
             if os.path.exists(volume_path):
@@ -282,7 +288,7 @@ class WindowsSmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
 
         if volume_path:
             ext = os.path.splitext(volume_path)[1].strip('.').lower()
-            if ext in self._SUPPORTED_IMAGE_FORMATS:
+            if ext in self._VALID_IMAGE_EXTENSIONS:
                 volume_format = ext
             else:
                 # Hyper-V relies on file extensions so we're enforcing them.
@@ -580,3 +586,8 @@ class WindowsSmbfsDriver(remotefs_drv.RemoteFSPoolMixin,
                 msg % dict(pool_name=pool_name,
                            pool_mappings=self._pool_mappings))
         return share
+
+    def _get_managed_vol_expected_path(self, volume, vol_ref_details):
+        fmt = self._vhdutils.get_vhd_format(vol_ref_details['vol_local_path'])
+        return os.path.join(vol_ref_details['mountpoint'],
+                            volume.name + ".%s" % fmt).lower()
