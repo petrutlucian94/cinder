@@ -82,17 +82,32 @@ def fixup_disk_format(disk_format):
 
 def qemu_img_info(path, run_as_root=True):
     """Return an object containing the parsed output from qemu-img info."""
+    def _get_info(cmd):
+        if os.name == 'nt':
+            cmd = cmd[2:]
+
+        out, _err = utils.execute(*cmd, run_as_root=run_as_root,
+                                  prlimit=QEMU_IMG_LIMITS)
+        return imageutils.QemuImgInfo(out)
+
     cmd = ['env', 'LC_ALL=C', 'qemu-img', 'info', path]
+    info = _get_info(cmd)
 
-    if os.name == 'nt':
-        cmd = cmd[2:]
-    out, _err = utils.execute(*cmd, run_as_root=run_as_root,
-                              prlimit=QEMU_IMG_LIMITS)
-    info = imageutils.QemuImgInfo(out)
-
+    if info.file_format == 'raw':
+        # Some vmdk images are treated by qemu-img as 'raw', unless explicitly
+        # passing the format.
+        try:
+            cmd = ['env', 'LC_ALL=C', 'qemu-img', 'info', '-f', 'vmdk', path]
+            info = _get_info(cmd)
+        except processutils.ProcessExecutionError as ex:
+            if os.path.splitext(path)[1].lower() == 'vmdk':
+                # If needed, this can become a hard error.
+                LOG.warning("The %s image has a 'vmdk' extension, yet "
+                            "qemu-img could not parse it as a vmdk image. "
+                            "Exception: %s", path, ex)
     # From Cinder's point of view, any 'luks' formatted images
     # should be treated as 'raw'.
-    if info.file_format == 'luks':
+    elif info.file_format == 'luks':
         info.file_format = 'raw'
 
     return info
