@@ -31,6 +31,7 @@ from cinder import exception
 from cinder.i18n import _
 from cinder.image import image_utils
 from cinder import interface
+from cinder import objects
 from cinder import utils
 from cinder.volume import configuration
 from cinder.volume.drivers import remotefs as remotefs_drv
@@ -186,6 +187,25 @@ class WindowsSmbfsDriver(remotefs_drv.RevertToSnapshotMixin,
         data = {'export': volume.provider_location,
                 'format': fmt,
                 'name': active_file}
+        if volume.provider_location in self.shares:
+            data['options'] = self.shares[volume.provider_location]
+        return {
+            'driver_volume_type': self.driver_volume_type,
+            'data': data,
+            'mount_point_base': self._get_mount_point_base()
+        }
+
+    @coordination.synchronized('{self.driver_prefix}-{snapshot.volume.id}')
+    def initialize_connection_snapshot(self, snapshot, connector):
+        snapshot_path = self._get_snapshot_backing_file(snapshot)
+        volume = snapshot.volume
+        fmt = self.get_volume_format(volume)
+
+        data = {'export': volume.provider_location,
+                'format': fmt,
+                'name': os.path.basename(snapshot_path),
+                'access_mode': 'ro'}
+
         if volume.provider_location in self.shares:
             data['options'] = self.shares[volume.provider_location]
         return {
@@ -382,13 +402,29 @@ class WindowsSmbfsDriver(remotefs_drv.RevertToSnapshotMixin,
         if self._is_volume_attached(snapshot.volume):
             LOG.debug("Snapshot is in-use. Performing Nova "
                       "assisted creation.")
-            return
+        else:
+            backing_file_full_path = os.path.join(
+                self._local_volume_dir(snapshot.volume),
+                backing_file)
+            self._vhdutils.create_differencing_vhd(new_snap_path,
+                                                   backing_file_full_path)
 
-        backing_file_full_path = os.path.join(
-            self._local_volume_dir(snapshot.volume),
-            backing_file)
-        self._vhdutils.create_differencing_vhd(new_snap_path,
-                                               backing_file_full_path)
+        # We're setting the backing file information in the DB as we may not
+        # be able to query the image while it's in use due to file locks.
+        #
+        # When dealing with temporary snapshots created by the driver, we
+        # may not receive an actual snapshot VO. We currently need this check
+        # in order to avoid breaking the volume clone operation.
+        #
+        # TODO(lpetrut): remove this check once we'll start using db entries
+        # for such temporary snapshots, most probably when we'll add support
+        # for cloning in-use volumes.
+        if isinstance(snapshot, objects.Snapshot):
+            snapshot.metadata['backing_file'] = backing_file
+            snapshot.save()
+        else:
+            LOG.debug("Received a '%s' object, skipping setting the backing "
+                      "file in the DB.", type(snapshot))
 
     def _extend_volume(self, volume, size_gb):
         self._check_extend_volume_support(volume, size_gb)
@@ -405,9 +441,6 @@ class WindowsSmbfsDriver(remotefs_drv.RevertToSnapshotMixin,
         # NOTE(lpetrut): We're slightly diverging from the super class
         # workflow. The reason is that we cannot query in-use vhd/x images,
         # nor can we add or remove images from a vhd/x chain in this case.
-        if not self._is_volume_attached(snapshot.volume):
-            return super(WindowsSmbfsDriver, self)._delete_snapshot(snapshot)
-
         info_path = self._local_path_volume_info(snapshot.volume)
         snap_info = self._read_info_file(info_path, empty_if_missing=True)
 
@@ -417,27 +450,82 @@ class WindowsSmbfsDriver(remotefs_drv.RevertToSnapshotMixin,
             return
 
         file_to_merge = snap_info[snapshot.id]
-        delete_info = {'file_to_merge': file_to_merge,
-                       'volume_id': snapshot.volume.id}
-        self._nova_assisted_vol_snap_delete(
-            snapshot._context, snapshot, delete_info)
+        deleting_latest_snap = utils.paths_normcase_equal(snap_info['active'],
+                                                          file_to_merge)
 
-        # At this point, the image file should no longer be in use, so we
-        # may safely query it so that we can update the 'active' image
-        # reference, if needed.
-        merged_img_path = os.path.join(
-            self._local_volume_dir(snapshot.volume),
-            file_to_merge)
-        if utils.paths_normcase_equal(snap_info['active'], file_to_merge):
-            new_active_file_path = self._vhdutils.get_vhd_parent_path(
-                merged_img_path).lower()
-            snap_info['active'] = os.path.basename(new_active_file_path)
+        if not self._is_volume_attached(snapshot.volume):
+            super(WindowsSmbfsDriver, self)._delete_snapshot(snapshot)
+        else:
+            delete_info = {'file_to_merge': file_to_merge,
+                           'volume_id': snapshot.volume.id}
+            self._nova_assisted_vol_snap_delete(
+                snapshot._context, snapshot, delete_info)
 
-        self._delete(merged_img_path)
+            # At this point, the image file should no longer be in use, so we
+            # may safely query it so that we can update the 'active' image
+            # reference, if needed.
+            merged_img_path = os.path.join(
+                self._local_volume_dir(snapshot.volume),
+                file_to_merge)
+            if deleting_latest_snap:
+                new_active_file_path = self._vhdutils.get_vhd_parent_path(
+                    merged_img_path).lower()
+                snap_info['active'] = os.path.basename(new_active_file_path)
 
-        # TODO(lpetrut): drop snapshot info file usage.
-        del(snap_info[snapshot.id])
-        self._write_info_file(info_path, snap_info)
+            self._delete(merged_img_path)
+
+            # TODO(lpetrut): drop snapshot info file usage.
+            del(snap_info[snapshot.id])
+            self._write_info_file(info_path, snap_info)
+
+        if not isinstance(snapshot, objects.Snapshot):
+            LOG.debug("Received a '%s' object, skipping setting the backing "
+                      "file in the DB.", type(snapshot))
+        elif not deleting_latest_snap:
+            backing_file = snapshot['metadata'].get('backing_file')
+            higher_snapshot = self._get_snapshot_by_backing_file(
+                snapshot.volume, file_to_merge)
+            # The snapshot objects should have a backing file set, unless
+            # created before an upgrade. If the snapshot we're deleting
+            # does not have a backing file set yet there is a newer one that
+            # does, we're clearing it out so that it won't provide wrong info.
+            if higher_snapshot:
+                LOG.debug("Updating backing file reference (%(backing_file)s) "
+                          "for higher snapshot: %(higher_snapshot_id)s.",
+                          dict(backing_file=snapshot.metadata['backing_file'],
+                               higher_snapshot_id=higher_snapshot.id))
+
+                higher_snapshot.metadata['backing_file'] = (
+                    snapshot.metadata['backing_file'])
+                higher_snapshot.save()
+            if not (higher_snapshot and backing_file):
+                LOG.info(
+                    "The deleted snapshot is not latest one, yet we could not "
+                    "find snapshot backing file information in the DB. This "
+                    "may happen after an upgrade. Certain operations against "
+                    "this volume may be unavailable while it's in-use.")
+
+    def _get_snapshot_by_backing_file(self, volume, backing_file):
+        all_snapshots = objects.SnapshotList.get_all_for_volume(
+            context.get_admin_context(), volume.id)
+        for snapshot in all_snapshots:
+            snap_backing_file = snapshot.metadata.get('backing_file')
+            if utils.paths_normcase_equal(snap_backing_file or '',
+                                          backing_file):
+                return snapshot
+
+    def _get_snapshot_backing_file(self, snapshot):
+        backing_file = snapshot.metadata.get('backing_file')
+        if backing_file:
+            return os.path.join(self._local_volume_dir(snapshot.volume),
+                                backing_file)
+        else:
+            LOG.info("Could not find the snapshot backing file in the DB. "
+                     "This may happen after an upgrade. Attempting to "
+                     "to query the image as a fallback. This may fail if "
+                     "the image is in-use.")
+            return super(WindowsSmbfsDriver, self)._get_snapshot_backing_file(
+                snapshot)
 
     def _check_extend_volume_support(self, volume, size_gb):
         snapshots_exist = self._snapshots_exist(volume)
